@@ -93,7 +93,8 @@
   }
   .eye-btn:hover svg { stroke: #4e9acd; }
 
-  .login-wrap button {
+  /* 登录按钮：只匹配直接子级的 #loginBtn，别误伤 .pwd-row 里的 .eye-btn */
+  .login-wrap > button#loginBtn {
     width: 100%;
     height: 40px;
     margin-top: 18px;
@@ -105,8 +106,8 @@
     cursor: pointer;
     transition: background .15s;
   }
-  .login-wrap button:hover { background: #3d8ab9; }
-  .login-wrap button:disabled { background: #3a3f4a; cursor: not-allowed; }
+  .login-wrap > button#loginBtn:hover { background: #3d8ab9; }
+  .login-wrap > button#loginBtn:disabled { background: #3a3f4a; cursor: not-allowed; }
   .err-msg {
     color: #f97583;
     font-size: 13px;
