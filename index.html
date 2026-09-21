@@ -123,6 +123,44 @@
     line-height: 1.6;
     margin-bottom: 20px;
   }
+
+  /* ===== 当前令牌状态 ===== */
+  .current-token {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .current-token .label {
+    font-size: 12px;
+    color: #8b949e;
+    margin-bottom: 4px;
+  }
+  .current-token .value {
+    font-size: 14px;
+    color: #e6edf3;
+    font-family: "Menlo", "Consolas", monospace;
+    word-break: break-all;
+  }
+  .current-token .value.empty { color: #f85149; }
+  .current-token .refresh-btn {
+    flex-shrink: 0;
+    height: 30px;
+    padding: 0 12px;
+    background: transparent;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #8b949e;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .current-token .refresh-btn:hover { border-color: #4e9acd; color: #4e9acd; }
+  .current-token .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .card label {
     display: block;
     font-size: 13px;
@@ -230,6 +268,16 @@
   <div class="card">
     <h2>更新 GitHub 个人访问令牌</h2>
     <p class="hint">输入新的 GitHub PAT（Personal Access Token），提交后立即生效。若已配置 Cloudflare API 凭证，令牌将持久化写入 Worker 环境变量，重启后仍有效。</p>
+
+    <!-- 当前令牌状态（脱敏预览，从后端 /api/get-token 获取） -->
+    <div class="current-token">
+      <div>
+        <div class="label">当前令牌</div>
+        <div class="value empty" id="currentToken">加载中...</div>
+      </div>
+      <button class="refresh-btn" id="refreshBtn" onclick="loadCurrentToken()">刷新</button>
+    </div>
+
     <label for="patInput">新的 GitHub 令牌</label>
     <div class="input-row">
       <input id="patInput" type="password" autocomplete="off" placeholder="ghp_xxxxxxxxxxxx 或 github_pat_xxxxxxxxxxxx">
@@ -268,6 +316,45 @@ function showMain() {
   document.getElementById("loginPage").style.display = "none";
   document.getElementById("mainPage").style.display = "";
   document.getElementById("patInput").focus();
+  loadCurrentToken();  // 进入主页时加载当前令牌状态
+}
+
+// ===== 加载当前令牌（脱敏预览，调用后端 GET /api/get-token） =====
+async function loadCurrentToken() {
+  const el = document.getElementById("currentToken");
+  const btn = document.getElementById("refreshBtn");
+  if (!getToken()) { clearToken(); showLogin(); return; }
+  el.className = "value empty";
+  el.textContent = "加载中...";
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${WORKER_URL}/api/get-token`, {
+      method: "GET",
+      headers: { "Authorization": "Bearer " + getToken() }
+    });
+    const data = await res.json();
+    if (res.status === 401) {
+      clearToken();
+      el.textContent = "登录已失效";
+      setTimeout(showLogin, 1500);
+    } else if (res.ok) {
+      if (data.hasToken && data.preview) {
+        el.className = "value";
+        el.textContent = data.preview;  // 例如 ghp_****abcd
+      } else {
+        el.className = "value empty";
+        el.textContent = "（未设置）";
+      }
+    } else {
+      el.className = "value empty";
+      el.textContent = data.error || "加载失败";
+    }
+  } catch (e) {
+    el.className = "value empty";
+    el.textContent = "网络错误：" + e.message;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ===== 登录 =====
@@ -348,6 +435,7 @@ async function updatePat() {
         showResult("warn", data.message || "令牌已在内存中生效，但未持久化");
       }
       input.value = "";  // 提交后清空输入框
+      loadCurrentToken();  // 刷新当前令牌显示
     } else {
       showResult("error", data.error || "更新失败");
     }
