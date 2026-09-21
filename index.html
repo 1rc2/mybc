@@ -367,9 +367,14 @@
  * 3) Worker 在后台用 CF_API_TOKEN 调用 Cloudflare API 更新环境变量
  * ============================================================ */
 
-// ===== 部署说明 =====
-// 前端与后端现在同一域名部署在 Cloudflare Worker 上（方案 A，同源），
-// 因此统一使用相对路径请求，无需硬编码域名，天然规避 CORS 与预检问题。
+// ===== API 基地址自动判断 =====
+// 同一套前端部署在两处：
+//   1) Cloudflare Worker（traemy.fuyi.workers.dev）—— 前后端同源，用相对路径即可
+//   2) GitHub Pages（1rc2.github.io/mybc/）—— 只有静态前端，必须跨域调 Worker 后端
+// 根据当前 hostname 自动决定用哪种模式，Worker 端已配置 CORS 反射 Origin
+const API_BASE = location.hostname.endsWith(".workers.dev")
+  ? ""
+  : "https://traemy.fuyi.workers.dev";
 
 // token 管理（localStorage 只存登录凭证，不存密钥）
 function getToken() { return localStorage.getItem("github_pat_token") || ""; }
@@ -399,7 +404,7 @@ async function loadCurrentToken() {
   el.textContent = "加载中...";
   btn.disabled = true;
   try {
-    const res = await fetch("/api/get-token", {
+    const res = await fetch(API_BASE + "/api/get-token", {
       method: "GET",
       headers: { "Authorization": "Bearer " + getToken() }
     });
@@ -438,7 +443,7 @@ async function doLogin() {
   if (!u || !p) { errEl.textContent = "请输入账号和密码"; return; }
   btn.disabled = true; btn.textContent = "登录中...";
   try {
-    const res = await fetch("/api/login", {
+    const res = await fetch(API_BASE + "/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: u, password: p })
@@ -486,7 +491,7 @@ async function updatePat() {
   btn.disabled = true;
   btn.textContent = "提交中...";
   try {
-    const res = await fetch("/api/update-key", {
+    const res = await fetch(API_BASE + "/api/update-key", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -549,15 +554,21 @@ function toggleVisibility() {
 
 // ===== 登录页底部：Worker 连接状态检测 =====
 async function checkWorkerHealth() {
-  // 显示当前配置的 Worker 地址
+  // 根据 API_BASE 显示真实后端地址和连接模式
   const urlEl = document.getElementById("workerUrlDisplay");
   const statusEl = document.getElementById("workerStatus");
   if (!urlEl || !statusEl) return;  // 主页面不显示
-  urlEl.textContent = location.origin + "（与网页同源）";
+  if (API_BASE) {
+    // 跨域模式：前端（Pages/其他）→ Worker 后端
+    urlEl.textContent = API_BASE + "（跨域调用）";
+  } else {
+    // 同源模式：Worker 前端 → Worker 后端
+    urlEl.textContent = location.origin + "（同源）";
+  }
   statusEl.textContent = "检测中...";
   statusEl.className = "status-wait";
   try {
-    const res = await fetch("/health", { method: "GET" });
+    const res = await fetch(API_BASE + "/health", { method: "GET" });
     if (res.ok) {
       statusEl.textContent = "✅ 已连接";
       statusEl.className = "status-ok";
