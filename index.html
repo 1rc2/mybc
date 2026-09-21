@@ -46,7 +46,7 @@
   .login-wrap input {
     width: 100%;
     height: 40px;
-    padding: 0 12px;
+    padding: 0 40px 0 12px; /* 右侧留出眼睛按钮空间 */
     background: #0d1117;
     border: 1px solid #30363d;
     border-radius: 8px;
@@ -57,29 +57,31 @@
   }
   .login-wrap input:focus { border-color: #4e9acd; }
 
-  /* 密码行：flex 布局，眼睛按钮和输入框并排，绝对定位不再叠到下方 */
+  /* 密码行容器：相对定位，让眼睛按钮绝对定位叠在输入框内部右侧 */
   .pwd-row {
-    display: flex;
-    gap: 8px;
+    position: relative;
   }
   .pwd-row input {
-    flex: 1;
+    padding-right: 40px;
   }
   .eye-btn {
-    width: 40px;
-    height: 40px;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 8px;
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
-    transition: border-color .15s, background .15s;
+    transition: background .15s;
   }
-  .eye-btn:hover { border-color: #4e9acd; background: #161b22; }
-  .eye-btn:active { background: #30363d; }
+  .eye-btn:hover { background: rgba(78,154,205,0.12); }
+  .eye-btn:active { background: rgba(78,154,205,0.2); }
   .eye-btn svg {
     width: 18px;
     height: 18px;
