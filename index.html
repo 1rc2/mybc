@@ -302,6 +302,7 @@
 <!-- ===== 登录页 ===== -->
 <div class="login-wrap" id="loginPage">
   <h1>GitHub 令牌管理</h1>
+  <div id="modeLabel" style="font-size:12px;color:#4e9acd;margin:-4px 0 8px;"></div>
   <p class="sub">登录后管理你的 GitHub 个人访问令牌</p>
   <label for="username">账号</label>
   <input id="username" type="text" autocomplete="username" placeholder="请输入账号">
@@ -376,10 +377,10 @@ const GITHUB_REPO = "1rc2/mybc";
 const GITHUB_FILE = ".sync-data/token_store.json";
 const PBKDF2_ITER = 100000;
 
-// ===== 跨页状态（都在内存，localStorage 只存"可选"辅助标记）=====
-let _sessionMasterKey = null;   // 主密钥派生结果（CryptoKey）
-let _sessionRealPat = null;    // 真实 GitHub PAT（用完即清）
-let _sessionLoginToken = null; // Worker Mode 用
+// ===== 会话状态（全部仅存内存，绝不写入 localStorage）=====
+let _sessionPwd = null;        // 主密码（仅内存，关闭页面即清）
+let _sessionRealPat = null;    // 解密出的真实令牌（用完即清）
+let _clearRealPat = null;      // 自动清理定时器句柄
 
 // ===== 加密工具（Web Crypto API，浏览器原生实现）=====
 async function pbkdf2DeriveKey(password, salt) {
@@ -520,16 +521,14 @@ async function doLogin() {
       errEl.textContent = data.error || "登录失败";
     }
   } else {
-    // GitHub Mode：验证 PAT + 派生主密钥
+    // GitHub Mode：验证 PAT，主密码仅存内存（localStorage 不存）
     const res = await ghApi("GET", "/user", u);
     if (!res.ok) {
-      errEl.textContent = "PAT 无效（GitHub API " + res.status + "）";
+      errEl.textContent = "PAT 无效或权限不足（GitHub API " + res.status + "）";
     } else {
-      // 记住：主密码只用一次派生密钥，localStorage **不存**
-      _sessionMasterKey = await pbkdf2DeriveKey(p, new Uint8Array(16).fill(0));
-      localStorage.setItem("gh_sync_pat", u); // 存储 PAT 可存（最小权限）
-      // 用完立即清主密码
-      _masterPasswordClear = true;
+      _sessionPwd = p;                          // 主密码仅存内存
+      localStorage.setItem("gh_sync_pat", u);   // 只存"用于读写仓库"的 PAT
+      pEl.value = "";                           // 清空密码输入框
       showMain();
     }
   }
@@ -552,21 +551,35 @@ async function loadCurrentToken() {
     if (data.hasToken && data.preview) { el.className = "value"; el.textContent = data.preview; }
     else { el.className = "value empty"; el.textContent = "（未设置）"; }
   } else {
-    // GitHub Mode：读加密存储并解密
+    // GitHub Mode：读取加密存储并解密
     const pat = localStorage.getItem("gh_sync_pat");
     if (!pat) { el.textContent = "（未登录）"; btn.disabled = false; return; }
     const g = await ghGetStore(pat);
-    if (!g.ok) { el.textContent = "⚠️ 读取失败：" + g.error; btn.disabled = false; return; }
-    if (!g.exists || !g.data.encrypted) { el.className = "value empty"; el.textContent = "（未设置，点击下方设置新令牌）"; btn.disabled = false; return; }
+    if (!g.ok) {
+      el.className = "value empty";
+      el.textContent = "⚠️ 读取失败：" + g.error;
+      btn.disabled = false; return;
+    }
+    if (!g.exists || !g.data.encrypted) {
+      el.className = "value empty";
+      el.textContent = "（未设置，请在下方输入新令牌并提交）";
+      btn.disabled = false; return;
+    }
+    // 主密码优先用会话内存，缺失时才询问（不落 localStorage）
+    const pwd = _sessionPwd || prompt("请输入主密码（解密用）：");
+    if (!pwd) { el.className = "value empty"; el.textContent = "（已取消）"; btn.disabled = false; return; }
     try {
       const salt = Uint8Array.from(atob(g.data.salt), c => c.charCodeAt(0));
-      const key = await pbkdf2DeriveKey(_lastPwd || prompt("请输入主密码（解密用）："), salt);
+      const key = await pbkdf2DeriveKey(pwd, salt);
       const plain = await aesGcmDecrypt(key, g.data.iv, g.data.encrypted);
+      _sessionPwd = pwd;                 // 记住本次会话主密码（仅内存）
       el.className = "value";
       el.textContent = maskPat(plain);
-      _sessionRealPat = plain;  // 真实令牌短暂在内存
-      _clearRealPat = setTimeout(() => { _sessionRealPat = null; }, 30000); // 30秒后自动清
+      _sessionRealPat = plain;           // 真实令牌短暂在内存
+      if (_clearRealPat) clearTimeout(_clearRealPat);
+      _clearRealPat = setTimeout(() => { _sessionRealPat = null; }, 30000);  // 30 秒后自动清
     } catch (e) {
+      _sessionPwd = null;                // 密码错误则清掉，避免反复用错密码
       el.className = "value empty";
       el.textContent = "⚠️ 主密码错误（无法解密）";
     }
@@ -584,7 +597,7 @@ async function updatePat() {
 
   if (MODE === "worker") {
     const t = localStorage.getItem("github_pat_token");
-    if (!t) { clearToken(); showLogin(); return; }
+    if (!t) { showLogin(); btn.disabled = false; btn.textContent = "提交更新"; return; }
     const res = await fetch(API_BASE + "/api/update-key", {
       method: "POST",
       headers: {
@@ -599,46 +612,43 @@ async function updatePat() {
     else showResult("warn", data.message || "已在内存生效");
     input.value = ""; loadCurrentToken();
   } else {
-    // GitHub Mode：加密写回仓库
+    // GitHub Mode：AES 加密后写回仓库（多设备同步）
     const pat = localStorage.getItem("gh_sync_pat");
+    if (!pat) { showLogin(); btn.disabled = false; btn.textContent = "提交更新"; return; }
+
     const g = await ghGetStore(pat);
-    let sha = null;
-    if (g.ok && g.exists) sha = g.sha;
-    let masterKey = _sessionMasterKey;
-    let saltArr = new Uint8Array(16);
-    if (!masterKey) {
-      // 首次设置或内存已清，重新输主密码
-      const p = prompt("请输入主密码（加密用）：");
-      if (!p) { btn.disabled = false; btn.textContent = "提交更新"; return; }
-      // 复用已有 salt（如有），否则生成新的
-      if (g.ok && g.exists && g.data.salt) {
-        saltArr = Uint8Array.from(atob(g.data.salt), c => c.charCodeAt(0));
-      } else {
-        saltArr = crypto.getRandomValues(new Uint8Array(16));
-      }
-      masterKey = await pbkdf2DeriveKey(p, saltArr);
-    } else {
-      // 用会话已派生的密钥；若 salt 已存在则用它重新派生（确保能解密旧密文）
-      if (g.ok && g.exists && g.data.salt) {
-        const saltStr = prompt("请输入主密码：");
-        if (!saltStr) { btn.disabled = false; btn.textContent = "提交更新"; return; }
-        saltArr = Uint8Array.from(atob(g.data.salt), c => c.charCodeAt(0));
-        masterKey = await pbkdf2DeriveKey(saltStr, saltArr);
-      }
+    if (!g.ok) {
+      showResult("error", "读取存储失败：" + g.error);
+      btn.disabled = false; btn.textContent = "提交更新"; return;
     }
-    const enc = await aesGcmEncrypt(masterKey, newPat);
+    const sha = (g.exists && g.sha) ? g.sha : null;
+
+    // 取主密码：优先会话内存，缺失时询问（不落 localStorage）
+    const pwd = _sessionPwd || prompt("请输入主密码（加密用）：");
+    if (!pwd) { btn.disabled = false; btn.textContent = "提交更新"; return; }
+
+    // salt：已有则复用（保证同一密码可跨设备解密），首次则随机生成
+    const saltArr = (g.exists && g.data.salt)
+      ? Uint8Array.from(atob(g.data.salt), c => c.charCodeAt(0))
+      : crypto.getRandomValues(new Uint8Array(16));
+
+    const key = await pbkdf2DeriveKey(pwd, saltArr);
+    const enc = await aesGcmEncrypt(key, newPat);
     const write = await ghPutStore(pat, {
       salt: btoa(String.fromCharCode(...saltArr)),
       encrypted: enc.ciphertext,
-      iv: enc.iv,
+      iv: enc.iv
     }, sha);
+
     if (write.ok) {
-      showResult("success", "✅ 已加密保存到多设备同步仓库");
+      _sessionPwd = pwd;   // 成功后记住本次会话密码（仅内存）
+      showResult("success", "✅ 已加密保存，其他设备刷新即可同步");
       input.value = "";
-      // 用完即清：覆盖真实令牌
-      _sessionRealPat = null;
+      _sessionRealPat = null;              // 用完即清
       if (_clearRealPat) clearTimeout(_clearRealPat);
       loadCurrentToken();
+    } else if (write.status === 409) {
+      showResult("error", "写入冲突（文件已被其他设备修改），请刷新后重试");
     } else {
       showResult("error", "写入失败（HTTP " + write.status + "）");
     }
@@ -652,9 +662,11 @@ function doLogout() {
     localStorage.removeItem("github_pat_token");
   } else {
     localStorage.removeItem("gh_sync_pat");
-    _sessionMasterKey = null;
-    _sessionRealPat = null;
   }
+  // 无论哪种模式，都清空内存中的敏感状态
+  _sessionPwd = null;
+  _sessionRealPat = null;
+  if (_clearRealPat) { clearTimeout(_clearRealPat); _clearRealPat = null; }
   showLogin();
   document.getElementById("username").value = "";
   document.getElementById("password").value = "";
@@ -722,10 +734,10 @@ function showResult(type, text) {
   el.textContent = text;
 }
 
-// ===== 页面关闭/刷新时清内存 =====
+// ===== 页面关闭/刷新时清空内存中的敏感数据 =====
 window.addEventListener("beforeunload", () => {
+  _sessionPwd = null;
   _sessionRealPat = null;
-  _sessionMasterKey = null;
 });
 </script>
 </body>
