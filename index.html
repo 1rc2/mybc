@@ -3,602 +3,278 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Trae AI 助手</title>
+<title>Trae AI 代理</title>
 <style>
-  /* ===== 全局重置 + 深色主题 ===== */
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    background: #0d1117;
-    color: #e6edf3;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
+  :root{
+    --bg:#0f1115;--card:#1a1d24;--card-2:#22262f;--ink:#e8eaed;
+    --muted:#8b9099;--line:#2a2f3a;--accent:#ff5c1f;--accent-deep:#e64a10;
+    --ok:#3ddc84;--err:#ef4444;--radius:12px;
   }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--bg);color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    display:flex;flex-direction:column;min-height:100vh;
+  }
+  .hidden{display:none!important}
 
-  /* ===== 登录页 ===== */
-  .login-wrap {
-    width: 360px;
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 32px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  /* 登录页 */
+  #login-view{
+    flex:1;display:flex;align-items:center;justify-content:center;padding:24px;
   }
-  .login-wrap h1 {
-    font-size: 20px;
-    margin-bottom: 6px;
-    color: #4e9acd;
+  .login-card{
+    background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:36px 32px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.4);
   }
-  .login-wrap .sub {
-    font-size: 13px;
-    color: #8b949e;
-    margin-bottom: 24px;
+  .login-card h1{font-size:22px;margin-bottom:6px;text-align:center}
+  .login-card .sub{color:var(--muted);font-size:13px;text-align:center;margin-bottom:28px}
+  .field{margin-bottom:18px}
+  .field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+  .field input{
+    width:100%;background:var(--card-2);border:1px solid var(--line);
+    color:var(--ink);padding:11px 14px;border-radius:8px;font-size:14px;
+    transition:border-color .2s;outline:none;
   }
-  .login-wrap label {
-    display: block;
-    font-size: 13px;
-    color: #8b949e;
-    margin: 10px 0 6px;
+  .field input:focus{border-color:var(--accent)}
+  .btn{
+    width:100%;background:var(--accent);color:#fff;border:none;
+    padding:12px;border-radius:8px;font-size:15px;font-weight:600;
+    cursor:pointer;transition:background .2s;margin-top:6px;
   }
-  .login-wrap input {
-    width: 100%;
-    height: 40px;
-    padding: 0 12px;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    color: #e6edf3;
-    font-size: 14px;
-    outline: none;
-    transition: border-color .15s;
-  }
-  .login-wrap input:focus { border-color: #4e9acd; }
-  .login-wrap button {
-    width: 100%;
-    height: 40px;
-    margin-top: 18px;
-    background: #4e9acd;
-    border: none;
-    border-radius: 8px;
-    color: #fff;
-    font-size: 15px;
-    cursor: pointer;
-    transition: background .15s;
-  }
-  .login-wrap button:hover { background: #3d8ab9; }
-  .login-wrap button:disabled { background: #3a3f4a; cursor: not-allowed; }
-  .err-msg {
-    color: #f97583;
-    font-size: 13px;
-    margin-top: 10px;
-    min-height: 18px;
-  }
+  .btn:hover{background:var(--accent-deep)}
+  .btn:disabled{opacity:.6;cursor:not-allowed}
+  .msg{margin-top:14px;font-size:13px;text-align:center;min-height:18px}
+  .msg.err{color:var(--err)}
+  .msg.ok{color:var(--ok)}
 
-  /* ===== 对话页 ===== */
-  .chat-wrap {
-    width: 100%;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    background: #0d1117;
+  /* 对话页 */
+  #chat-view{flex:1;display:flex;flex-direction:column;min-height:100vh}
+  .chat-header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 20px;background:var(--card);border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:10;
   }
-  .chat-header {
-    height: 56px;
-    padding: 0 20px;
-    background: #161b22;
-    border-bottom: 1px solid #30363d;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-shrink: 0;
+  .chat-header .title{font-weight:600;font-size:15px}
+  .chat-header .logout{
+    background:transparent;border:1px solid var(--line);color:var(--muted);
+    padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer;
   }
-  .chat-header .title {
-    font-size: 16px;
-    color: #4e9acd;
+  .chat-header .logout:hover{border-color:var(--accent);color:var(--accent)}
+  .messages{
+    flex:1;overflow-y:auto;padding:20px;max-width:880px;margin:0 auto;width:100%;
   }
-  .chat-header button {
-    height: 32px;
-    padding: 0 14px;
-    background: transparent;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    color: #c9d1d9;
-    font-size: 13px;
-    cursor: pointer;
+  .msg-item{margin-bottom:18px;display:flex;flex-direction:column}
+  .msg-item.user{align-items:flex-end}
+  .msg-item.ai{align-items:flex-start}
+  .msg-bubble{
+    max-width:80%;padding:11px 15px;border-radius:12px;font-size:14.5px;
+    line-height:1.6;white-space:pre-wrap;word-break:break-word;
   }
-  .chat-header button:hover { border-color: #4e9acd; color: #4e9acd; }
+  .msg-item.user .msg-bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+  .msg-item.ai .msg-bubble{background:var(--card-2);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .msg-role{font-size:11px;color:var(--muted);margin-bottom:4px;padding:0 4px}
+  .msg-item.err .msg-bubble{background:rgba(239,68,68,.15);color:var(--err);border:1px solid rgba(239,68,68,.3)}
+  .typing{color:var(--muted);font-size:13px;padding:0 4px}
+  .typing span{display:inline-block;animation:dot 1.4s infinite}
+  .typing span:nth-child(2){animation-delay:.2s}
+  .typing span:nth-child(3){animation-delay:.4s}
+  @keyframes dot{0%,60%,100%{opacity:.3}30%{opacity:1}}
 
-  /* ===== Tab 切换 ===== */
-  .tabs {
-    display: flex;
-    gap: 0;
-    background: #161b22;
-    border-bottom: 1px solid #30363d;
-    flex-shrink: 0;
+  .composer{
+    border-top:1px solid var(--line);background:var(--card);padding:14px 20px;
+    position:sticky;bottom:0;
   }
-  .tab-btn {
-    flex: 1;
-    height: 46px;
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: #8b949e;
-    font-size: 14px;
-    cursor: pointer;
-    transition: color .15s, border-color .15s;
+  .composer-inner{max-width:880px;margin:0 auto;display:flex;gap:10px;align-items:flex-end}
+  .composer textarea{
+    flex:1;background:var(--card-2);border:1px solid var(--line);color:var(--ink);
+    padding:11px 14px;border-radius:10px;font-size:14.5px;resize:none;outline:none;
+    min-height:44px;max-height:160px;line-height:1.5;font-family:inherit;
+    transition:border-color .2s;
   }
-  .tab-btn.active {
-    color: #4e9acd;
-    border-bottom-color: #4e9acd;
+  .composer textarea:focus{border-color:var(--accent)}
+  .composer button{
+    background:var(--accent);color:#fff;border:none;padding:0 18px;
+    border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;
+    height:44px;transition:background .2s;
   }
-  .tab-btn:hover:not(.active) { color: #c9d1d9; }
-
-  /* ===== 密钥更新模块 ===== */
-  .key-module {
-    flex: 1;
-    overflow-y: auto;
-    padding: 32px 20px;
-    max-width: 520px;
-    margin: 0 auto;
-    width: 100%;
-    display: none;
-  }
-  .key-module.active { display: block; }
-  .key-card {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 28px;
-  }
-  .key-card h2 {
-    font-size: 18px;
-    color: #4e9acd;
-    margin-bottom: 8px;
-  }
-  .key-card .hint {
-    font-size: 13px;
-    color: #8b949e;
-    line-height: 1.6;
-    margin-bottom: 20px;
-  }
-  .key-card label {
-    display: block;
-    font-size: 13px;
-    color: #8b949e;
-    margin: 14px 0 6px;
-  }
-  .key-card input {
-    width: 100%;
-    height: 42px;
-    padding: 0 12px;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    color: #e6edf3;
-    font-size: 14px;
-    outline: none;
-    font-family: "Menlo", "Consolas", monospace;
-    transition: border-color .15s;
-  }
-  .key-card input:focus { border-color: #4e9acd; }
-  .key-card .row {
-    display: flex;
-    gap: 10px;
-    margin-top: 6px;
-  }
-  .key-card .row button {
-    flex: 1;
-    height: 40px;
-    border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    cursor: pointer;
-  }
-  .btn-submit {
-    background: #4e9acd;
-    color: #fff;
-  }
-  .btn-submit:hover { background: #3d8ab9; }
-  .btn-submit:disabled { background: #3a3f4a; cursor: not-allowed; }
-  .btn-toggle {
-    background: transparent;
-    border: 1px solid #30363d !important;
-    color: #8b949e;
-    flex: 0 0 60px !important;
-  }
-  .btn-toggle:hover { border-color: #4e9acd !important; color: #4e9acd; }
-  .key-result {
-    margin-top: 16px;
-    padding: 12px 14px;
-    border-radius: 8px;
-    font-size: 13px;
-    line-height: 1.6;
-    display: none;
-  }
-  .key-result.success {
-    display: block;
-    background: rgba(63, 185, 80, 0.12);
-    border: 1px solid #2ea043;
-    color: #3fb950;
-  }
-  .key-result.error {
-    display: block;
-    background: rgba(248, 81, 73, 0.12);
-    border: 1px solid #f85149;
-    color: #ff7b72;
-  }
-  .key-result.warn {
-    display: block;
-    background: rgba(210, 153, 34, 0.12);
-    border: 1px solid #d29922;
-    color: #e3b341;
-  }
-
-  .chat-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px;
-    max-width: 960px;
-    margin: 0 auto;
-    width: 100%;
-  }
-  .msg {
-    margin-bottom: 16px;
-    display: flex;
-    flex-direction: column;
-  }
-  .msg .role {
-    font-size: 12px;
-    color: #8b949e;
-    margin-bottom: 6px;
-  }
-  .msg.user { align-items: flex-end; }
-  .msg.user .bubble {
-    background: #4e9acd;
-    color: #fff;
-  }
-  .msg.ai .bubble {
-    background: #161b22;
-    border: 1px solid #30363d;
-  }
-  .bubble {
-    max-width: 80%;
-    padding: 12px 16px;
-    border-radius: 12px;
-    font-size: 14px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-  }
-
-  .chat-input {
-    border-top: 1px solid #30363d;
-    background: #161b22;
-    padding: 14px 20px;
-    max-width: 960px;
-    margin: 0 auto;
-    width: 100%;
-    flex-shrink: 0;
-  }
-  .chat-input .row {
-    display: flex;
-    gap: 10px;
-  }
-  .chat-input textarea {
-    flex: 1;
-    height: 56px;
-    padding: 12px;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    color: #e6edf3;
-    font-size: 14px;
-    resize: none;
-    outline: none;
-    font-family: inherit;
-  }
-  .chat-input textarea:focus { border-color: #4e9acd; }
-  .chat-input button {
-    width: 90px;
-    background: #4e9acd;
-    border: none;
-    border-radius: 8px;
-    color: #fff;
-    font-size: 14px;
-    cursor: pointer;
-  }
-  .chat-input button:hover { background: #3d8ab9; }
-  .chat-input button:disabled { background: #3a3f4a; cursor: not-allowed; }
-
-  /* 滚动条样式 */
-  ::-webkit-scrollbar { width: 8px; }
-  ::-webkit-scrollbar-track { background: #0d1117; }
-  ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
-  ::-webkit-scrollbar-thumb:hover { background: #4e9acd; }
+  .composer button:hover:not(:disabled){background:var(--accent-deep)}
+  .composer button:disabled{opacity:.5;cursor:not-allowed}
+  .hint{font-size:11px;color:var(--muted);text-align:center;margin-top:10px}
 </style>
 </head>
 <body>
 
-<!-- ===== 登录页 ===== -->
-<div class="login-wrap" id="loginPage">
-  <h1>Trae AI 助手</h1>
-  <p class="sub">登录后开始对话</p>
-  <label for="username">账号</label>
-  <input id="username" type="text" autocomplete="username" placeholder="请输入账号">
-  <label for="password">密码</label>
-  <input id="password" type="password" autocomplete="current-password" placeholder="请输入密码">
-  <button id="loginBtn" onclick="doLogin()">登录</button>
-  <div class="err-msg" id="loginErr"></div>
-</div>
-
-<!-- ===== 对话页（含两个模块：AI 对话 + 密钥更新） ===== -->
-<div class="chat-wrap" id="chatPage" style="display:none">
-  <div class="chat-header">
-    <div class="title">Trae AI 助手</div>
-    <button onclick="doLogout()">退出登录</button>
+<!-- 登录页 -->
+<section id="login-view">
+  <div class="login-card">
+    <h1>Trae AI 代理</h1>
+    <p class="sub">单人自用 · 密钥安全托管</p>
+    <div class="field">
+      <label>账号</label>
+      <input id="username" type="text" autocomplete="username" placeholder="输入账号">
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="输入密码">
+    </div>
+    <button class="btn" id="login-btn" type="button">登录</button>
+    <div class="msg" id="login-msg"></div>
   </div>
-  <!-- Tab 切换条 -->
-  <div class="tabs">
-    <button class="tab-btn active" id="tabChat" onclick="switchTab('chat')">AI 对话</button>
-    <button class="tab-btn" id="tabKey" onclick="switchTab('key')">密钥管理</button>
-  </div>
+</section>
 
-  <!-- 模块 1：AI 对话 -->
-  <div class="chat-body" id="chatModule">
-    <div id="chatBody"></div>
-    <div class="chat-input">
-      <div class="row">
-        <textarea id="promptInput" placeholder="输入你的问题，Ctrl+Enter 发送..." onkeydown="handleKey(event)"></textarea>
-        <button id="sendBtn" onclick="sendPrompt()">发送</button>
-      </div>
+<!-- 对话页 -->
+<section id="chat-view" class="hidden">
+  <header class="chat-header">
+    <div class="title">Trae AI 代理</div>
+    <button class="logout" id="logout-btn" type="button">退出登录</button>
+  </header>
+  <div class="messages" id="messages">
+    <div class="msg-item ai">
+      <div class="msg-role">AI</div>
+      <div class="msg-bubble">你好，我是 Trae AI 代理。输入你的问题，我会通过安全网关转发到 Trae API 并返回回答。</div>
     </div>
   </div>
-
-  <!-- 模块 2：密钥更新 -->
-  <div class="key-module" id="keyModule">
-    <div class="key-card">
-      <h2>更新 Trae API 密钥</h2>
-      <p class="hint">输入新的 Trae API 密钥，提交后会立即生效。若已配置 Cloudflare API 凭证，密钥将持久化写入 Worker 环境变量，重启后仍有效。</p>
-      <label for="keyInput">新的 API 密钥</label>
-      <input id="keyInput" type="password" autocomplete="off" placeholder="粘贴你的 Trae API 密钥">
-      <div class="row">
-        <button class="btn-submit" id="updateBtn" onclick="updateKey()">提交更新</button>
-        <button class="btn-toggle" onclick="toggleKeyVisibility()" id="toggleBtn">显示</button>
-      </div>
-      <div class="key-result" id="keyResult"></div>
+  <div class="composer">
+    <div class="composer-inner">
+      <textarea id="prompt-input" placeholder="输入问题，Enter 发送，Shift+Enter 换行" rows="1"></textarea>
+      <button id="send-btn" type="button">发送</button>
     </div>
+    <div class="hint">密钥保存在 Cloudflare Workers 后台，前端不接触原始密钥</div>
   </div>
-</div>
+</section>
 
 <script>
-/* ============================================================
- * 前端逻辑说明
- * ------------------------------------------------------------
- * 1) 前端只保存临时登录 token（localStorage），不保存任何 API 密钥
- * 2) 每次发送 prompt 时，附带 Authorization: Bearer <token>
- * 3) Worker 在后台用 TRAE_API_KEY 转发请求，密钥不会返回前端
- * ============================================================ */
+"use strict";
+// ⚠️ 部署前必改：改成你自己的 Cloudflare Worker 域名
+const WORKER_URL = "https://trae-proxy.YOUR_SUBDOMAIN.workers.dev";
 
-// ===== 配置：Cloudflare Worker 部署地址 =====
-// 部署 Worker 后，把 WORKER_URL 替换为你的 Worker 实际域名
-// 例如：https://trae-proxy.你的子域.workers.dev
-const WORKER_URL = "https://trae-proxy.你的子域.workers.dev";
+const $ = id => document.getElementById(id);
+let token = "";            // 登录后获得的临时 token，仅保存在内存
+let isSending = false;
 
-// token 只在浏览器保存临时登录凭证（不是 API 密钥）
-function getToken() { return localStorage.getItem("trae_token") || ""; }
-function setToken(t) { localStorage.setItem("trae_token", t); }
-function clearToken() { localStorage.removeItem("trae_token"); }
+/* ---------- 登录 ---------- */
+$("login-btn").addEventListener("click", doLogin);
+$("password").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
 
-// 启动时若有 token 直接进入对话页
-if (getToken()) { showChat(); } else { showLogin(); }
-
-function showLogin() {
-  document.getElementById("loginPage").style.display = "";
-  document.getElementById("chatPage").style.display = "none";
-}
-function showChat() {
-  document.getElementById("loginPage").style.display = "none";
-  document.getElementById("chatPage").style.display = "";
-  document.getElementById("chatBody").innerHTML = "";
-  appendMsg("ai", "你好，我是 Trae AI 助手，请问有什么可以帮你？");
-  document.getElementById("promptInput").focus();
-  switchTab("chat");  // 默认显示 AI 对话模块
-}
-
-// ===== Tab 切换：AI 对话 / 密钥管理 =====
-function switchTab(name) {
-  const chatMod = document.getElementById("chatModule");
-  const keyMod = document.getElementById("keyModule");
-  const tabChat = document.getElementById("tabChat");
-  const tabKey = document.getElementById("tabKey");
-  if (name === "chat") {
-    chatMod.style.display = "flex";
-    keyMod.classList.remove("active");
-    tabChat.classList.add("active");
-    tabKey.classList.remove("active");
-  } else {
-    chatMod.style.display = "none";
-    keyMod.classList.add("active");
-    tabKey.classList.add("active");
-    tabChat.classList.remove("active");
-    document.getElementById("keyInput").focus();
-  }
-}
-
-// ===== 登录 =====
 async function doLogin() {
-  const u = document.getElementById("username").value.trim();
-  const p = document.getElementById("password").value;
-  const errEl = document.getElementById("loginErr");
-  const btn = document.getElementById("loginBtn");
-  errEl.textContent = "";
-  if (!u || !p) { errEl.textContent = "请输入账号和密码"; return; }
-  btn.disabled = true; btn.textContent = "登录中...";
+  const u = $("username").value.trim();
+  const p = $("password").value;
+  const msg = $("login-msg");
+  msg.className = "msg"; msg.textContent = "";
+  if (!u || !p) { msg.className = "msg err"; msg.textContent = "请填写账号和密码"; return; }
+
+  $("login-btn").disabled = true;
   try {
-    const res = await fetch(`${WORKER_URL}/api/login`, {
+    const res = await fetch(WORKER_URL + "/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: u, password: p })
     });
     const data = await res.json();
-    if (res.ok && data.token) {
-      setToken(data.token);
-      showChat();
-    } else {
-      errEl.textContent = data.error || "登录失败";
+    if (!res.ok || !data.token) {
+      throw new Error(data.error || "登录失败");
     }
+    token = data.token;
+    $("login-view").classList.add("hidden");
+    $("chat-view").classList.remove("hidden");
+    $("prompt-input").focus();
   } catch (e) {
-    errEl.textContent = "网络错误：" + e.message;
+    msg.className = "msg err";
+    msg.textContent = e.message === "Failed to fetch"
+      ? "无法连接后端，请检查 Worker 地址或网络"
+      : e.message;
   } finally {
-    btn.disabled = false; btn.textContent = "登录";
+    $("login-btn").disabled = false;
   }
 }
 
-// ===== 退出登录 =====
-function doLogout() {
-  clearToken();
-  showLogin();
-  document.getElementById("username").value = "";
-  document.getElementById("password").value = "";
-}
+/* ---------- 退出 ---------- */
+$("logout-btn").addEventListener("click", () => {
+  token = "";
+  $("chat-view").classList.add("hidden");
+  $("login-view").classList.remove("hidden");
+  $("username").value = "";
+  $("password").value = "";
+  $("messages").innerHTML = `
+    <div class="msg-item ai">
+      <div class="msg-role">AI</div>
+      <div class="msg-bubble">你好，我是 Trae AI 代理。输入你的问题，我会通过安全网关转发到 Trae API 并返回回答。</div>
+    </div>`;
+});
 
-// ===== 发送 prompt 给 Worker =====
+/* ---------- 发送对话 ---------- */
+const ta = $("prompt-input");
+ta.addEventListener("input", () => {
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
+});
+ta.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+});
+$("send-btn").addEventListener("click", sendPrompt);
+
 async function sendPrompt() {
-  const ta = document.getElementById("promptInput");
-  const btn = document.getElementById("sendBtn");
-  const text = ta.value.trim();
-  if (!text) return;
-  if (!getToken()) { doLogout(); return; }
+  if (isSending) return;
+  const prompt = ta.value.trim();
+  if (!prompt) return;
 
-  appendMsg("user", text);  // 先把自己的话显示出来
-  ta.value = "";
-  btn.disabled = true; btn.textContent = "请求中...";
+  addMessage("user", prompt);
+  ta.value = ""; ta.style.height = "auto";
+  const typingEl = addTyping();
 
-  // 占位一条 AI 消息，等返回后填充
-  const aiEl = appendMsg("ai", "正在思考...");
-
+  isSending = true;
+  $("send-btn").disabled = true;
   try {
-    const res = await fetch(`${WORKER_URL}/api/ai`, {
+    const res = await fetch(WORKER_URL + "/chat", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken()  // 只传临时 token，不传 API 密钥
+        "Authorization": "Bearer " + token
       },
-      body: JSON.stringify({ prompt: text })
+      body: JSON.stringify({ prompt })
     });
     const data = await res.json();
-    if (res.ok) {
-      aiEl.querySelector(".bubble").textContent = data.reply || "(空回复)";
-    } else if (res.status === 401) {
-      clearToken();
-      aiEl.querySelector(".bubble").textContent = "登录已失效：" + (data.error || "请重新登录");
-      setTimeout(showLogin, 1500);
+    typingEl.remove();
+    if (!res.ok) {
+      const errMsg = data.error || ("请求失败 HTTP " + res.status);
+      addMessage("ai", errMsg, true);
+      if (res.status === 401) {
+        // token 失效，返回登录页
+        setTimeout(() => $("logout-btn").click(), 1200);
+      }
     } else {
-      aiEl.querySelector(".bubble").textContent = "出错：" + (data.error || "未知错误");
+      addMessage("ai", data.reply || "(空回复)");
     }
   } catch (e) {
-    aiEl.querySelector(".bubble").textContent = "网络错误：" + e.message;
+    typingEl.remove();
+    addMessage("ai", "网络错误：" + e.message, true);
   } finally {
-    btn.disabled = false; btn.textContent = "发送";
+    isSending = false;
+    $("send-btn").disabled = false;
     ta.focus();
   }
 }
 
-// ===== 在对话区追加一条消息，返回该消息元素 =====
-function appendMsg(role, text) {
-  const body = document.getElementById("chatBody");
-  const div = document.createElement("div");
-  div.className = "msg " + role;
-  const roleEl = document.createElement("div");
-  roleEl.className = "role";
-  roleEl.textContent = role === "user" ? "我" : "AI";
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  bubble.textContent = text;
-  div.appendChild(roleEl);
-  div.appendChild(bubble);
-  body.appendChild(div);
-  body.scrollTop = body.scrollHeight;
-  return div;
+function addMessage(role, text, isErr) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg-item " + role + (isErr ? " err" : "");
+  wrap.innerHTML = `<div class="msg-role">${role === "user" ? "你" : "AI"}</div>
+    <div class="msg-bubble"></div>`;
+  wrap.querySelector(".msg-bubble").textContent = text;
+  $("messages").appendChild(wrap);
+  $("messages").scrollTop = $("messages").scrollHeight;
+  return wrap;
 }
 
-// ===== Ctrl+Enter / Cmd+Enter 发送 =====
-function handleKey(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-    e.preventDefault();
-    sendPrompt();
-  }
-}
-
-// ===== 密钥更新：提交新的 Trae API 密钥 =====
-async function updateKey() {
-  const input = document.getElementById("keyInput");
-  const btn = document.getElementById("updateBtn");
-  const result = document.getElementById("keyResult");
-  const newKey = input.value.trim();
-  result.className = "key-result";
-  result.textContent = "";
-  if (!newKey) {
-    showKeyResult("error", "请输入新的 API 密钥");
-    return;
-  }
-  if (!getToken()) { clearToken(); showLogin(); return; }
-
-  btn.disabled = true;
-  btn.textContent = "提交中...";
-  try {
-    const res = await fetch(`${WORKER_URL}/api/update-key`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken()
-      },
-      body: JSON.stringify({ apiKey: newKey })
-    });
-    const data = await res.json();
-    if (res.status === 401) {
-      clearToken();
-      showKeyResult("error", "登录已失效，请重新登录");
-      setTimeout(showLogin, 1500);
-    } else if (res.ok) {
-      if (data.persisted) {
-        showKeyResult("success", data.message || "密钥更新成功");
-      } else {
-        showKeyResult("warn", data.message || "密钥已在内存中生效，但未持久化到环境变量");
-      }
-      input.value = "";  // 提交成功后清空输入框
-    } else {
-      showKeyResult("error", data.error || "更新失败");
-    }
-  } catch (e) {
-    showKeyResult("error", "网络错误：" + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "提交更新";
-  }
-}
-
-// ===== 显示/隐藏密钥输入框内容 =====
-function toggleKeyVisibility() {
-  const input = document.getElementById("keyInput");
-  const btn = document.getElementById("toggleBtn");
-  if (input.type === "password") {
-    input.type = "text";
-    btn.textContent = "隐藏";
-  } else {
-    input.type = "password";
-    btn.textContent = "显示";
-  }
-}
-
-// ===== 显示密钥更新结果提示 =====
-function showKeyResult(type, text) {
-  const el = document.getElementById("keyResult");
-  el.className = "key-result " + type;
-  el.textContent = text;
+function addTyping() {
+  const wrap = document.createElement("div");
+  wrap.className = "msg-item ai";
+  wrap.innerHTML = `<div class="msg-role">AI</div><div class="typing"><span>•</span><span>•</span><span>•</span></div>`;
+  $("messages").appendChild(wrap);
+  $("messages").scrollTop = $("messages").scrollHeight;
+  return wrap;
 }
 </script>
 </body>
