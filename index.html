@@ -18,116 +18,6 @@
     min-height: 100vh;
   }
 
-  /* ===== 登录页 ===== */
-  .login-wrap {
-    width: 360px;
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 12px;
-    padding: 32px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  }
-  .login-wrap h1 {
-    font-size: 20px;
-    margin-bottom: 6px;
-    color: #4e9acd;
-  }
-  .login-wrap .sub {
-    font-size: 13px;
-    color: #8b949e;
-    margin-bottom: 24px;
-  }
-  .login-wrap label {
-    display: block;
-    font-size: 13px;
-    color: #8b949e;
-    margin: 10px 0 6px;
-  }
-  .login-wrap input {
-    width: 100%;
-    height: 40px;
-    padding: 0 40px 0 12px; /* 右侧留出眼睛按钮空间 */
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    color: #e6edf3;
-    font-size: 14px;
-    outline: none;
-    transition: border-color .15s;
-  }
-  .login-wrap input:focus { border-color: #4e9acd; }
-
-  /* 密码行容器：相对定位，让眼睛按钮绝对定位叠在输入框内部右侧 */
-  .pwd-row {
-    position: relative;
-  }
-  .pwd-row input {
-    padding-right: 40px;
-  }
-  .eye-btn {
-    position: absolute;
-    right: 4px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 32px;
-    height: 32px;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background .15s;
-  }
-  .eye-btn:hover { background: rgba(78,154,205,0.12); }
-  .eye-btn:active { background: rgba(78,154,205,0.2); }
-  .eye-btn svg {
-    width: 18px;
-    height: 18px;
-    fill: none;
-    stroke: #8b949e;
-    stroke-width: 2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-  .eye-btn:hover svg { stroke: #4e9acd; }
-
-  .login-wrap button {
-    width: 100%;
-    height: 40px;
-    margin-top: 18px;
-    background: #4e9acd;
-    border: none;
-    border-radius: 8px;
-    color: #fff;
-    font-size: 15px;
-    cursor: pointer;
-    transition: background .15s;
-  }
-  .login-wrap button:hover { background: #3d8ab9; }
-  .login-wrap button:disabled { background: #3a3f4a; cursor: not-allowed; }
-  .err-msg {
-    color: #f97583;
-    font-size: 13px;
-    margin-top: 10px;
-    min-height: 18px;
-  }
-
-  /* 登录页底部：接口地址 + 连接状态 */
-  .login-footer {
-    margin-top: 16px;
-    padding-top: 14px;
-    border-top: 1px dashed #30363d;
-    font-size: 12px;
-    color: #8b949e;
-    line-height: 1.8;
-    word-break: break-all;
-  }
-  .login-footer .status-ok { color: #3fb950; }
-  .login-footer .status-bad { color: #f97583; }
-  .login-footer .status-wait { color: #8b949e; }
-
   /* ===== 主页面 ===== */
   .main-wrap {
     width: 100%;
@@ -144,17 +34,6 @@
     font-size: 18px;
     color: #4e9acd;
   }
-  .main-header button {
-    height: 32px;
-    padding: 0 14px;
-    background: transparent;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    color: #c9d1d9;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .main-header button:hover { border-color: #4e9acd; color: #4e9acd; }
 
   /* ===== 令牌更新卡片 ===== */
   .card {
@@ -298,41 +177,10 @@
 </head>
 <body>
 
-<!-- ===== 登录页 ===== -->
-<div class="login-wrap" id="loginPage">
-  <h1>GitHub 令牌管理</h1>
-  <p class="sub">登录后管理你的 GitHub 个人访问令牌</p>
-  <label for="username">账号</label>
-  <input id="username" type="text" autocomplete="username" placeholder="请输入账号">
-  <label for="password">密码</label>
-  <div class="pwd-row">
-    <input id="password" type="password" autocomplete="current-password" placeholder="请输入密码">
-    <button type="button" class="eye-btn" onclick="toggleLoginPwd()" id="loginEye" title="显示/隐藏密码">
-      <svg id="eyeOpen" viewBox="0 0 24 24">
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-        <circle cx="12" cy="12" r="3"/>
-      </svg>
-      <svg id="eyeClose" viewBox="0 0 24 24" style="display:none">
-        <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a19.77 19.77 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a19.6 19.6 0 0 1-3.17 4.19M1 1l22 22"/>
-        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
-      </svg>
-    </button>
-  </div>
-  <button id="loginBtn" onclick="doLogin()">登录</button>
-  <div class="err-msg" id="loginErr"></div>
-
-  <!-- 底部：接口地址 + 连接状态（方便排错 Failed to fetch） -->
-  <div class="login-footer">
-    <div>接口：<span id="workerUrlDisplay">-</span></div>
-    <div>连接：<span id="workerStatus" class="status-wait">检测中...</span></div>
-  </div>
-</div>
-
-<!-- ===== 主页面（登录后显示） ===== -->
-<div class="main-wrap" id="mainPage" style="display:none">
+<!-- ===== 主页面（无登录，直接显示） ===== -->
+<div class="main-wrap">
   <div class="main-header">
     <h1>GitHub 令牌管理</h1>
-    <button onclick="doLogout()">退出登录</button>
   </div>
   <div class="card">
     <h2>更新 GitHub 个人访问令牌</h2>
@@ -361,56 +209,31 @@
 /* ============================================================
  * 前端逻辑说明
  * ------------------------------------------------------------
- * 1) 前端只保存临时登录 token（localStorage），不保存任何 API 密钥
- * 2) 提交新 PAT 时，附带 Authorization: Bearer <token>
- * 3) Worker 在后台用 CF_API_TOKEN 调用 Cloudflare API 更新环境变量
+ * 前端与后端同源部署在 Cloudflare Worker 上，
+ * 直接调用相对路径 /api/update-key 和 /api/get-token，
+ * 不需要任何登录认证。
  * ============================================================ */
 
-// ===== 部署说明 =====
-// 前端与后端现在同一域名部署在 Cloudflare Worker 上（方案 A，同源），
-// 因此统一使用相对路径请求，无需硬编码域名，天然规避 CORS 与预检问题。
-
-// token 管理（localStorage 只存登录凭证，不存密钥）
-function getToken() { return localStorage.getItem("github_pat_token") || ""; }
-function setToken(t) { localStorage.setItem("github_pat_token", t); }
-function clearToken() { localStorage.removeItem("github_pat_token"); }
-
-// 启动时检查登录状态 + 检测 Worker 连接
-if (getToken()) { showMain(); } else { showLogin(); checkWorkerHealth(); }
-
-function showLogin() {
-  document.getElementById("loginPage").style.display = "";
-  document.getElementById("mainPage").style.display = "none";
-}
-function showMain() {
-  document.getElementById("loginPage").style.display = "none";
-  document.getElementById("mainPage").style.display = "";
+// 页面加载完成后自动读取当前令牌
+window.addEventListener("DOMContentLoaded", () => {
+  loadCurrentToken();
   document.getElementById("patInput").focus();
-  loadCurrentToken();  // 进入主页时加载当前令牌状态
-}
+});
 
-// ===== 加载当前令牌（脱敏预览，调用后端 GET /api/get-token） =====
+// ===== 加载当前令牌（脱敏预览） =====
 async function loadCurrentToken() {
   const el = document.getElementById("currentToken");
   const btn = document.getElementById("refreshBtn");
-  if (!getToken()) { clearToken(); showLogin(); return; }
   el.className = "value empty";
   el.textContent = "加载中...";
   btn.disabled = true;
   try {
-    const res = await fetch("/api/get-token", {
-      method: "GET",
-      headers: { "Authorization": "Bearer " + getToken() }
-    });
+    const res = await fetch("/api/get-token", { method: "GET" });
     const data = await res.json();
-    if (res.status === 401) {
-      clearToken();
-      el.textContent = "登录已失效";
-      setTimeout(showLogin, 1500);
-    } else if (res.ok) {
+    if (res.ok) {
       if (data.hasToken && data.preview) {
         el.className = "value";
-        el.textContent = data.preview;  // 例如 ghp_****abcd
+        el.textContent = data.preview;
       } else {
         el.className = "value empty";
         el.textContent = "（未设置）";
@@ -427,85 +250,36 @@ async function loadCurrentToken() {
   }
 }
 
-// ===== 登录 =====
-async function doLogin() {
-  const u = document.getElementById("username").value.trim();
-  const p = document.getElementById("password").value;
-  const errEl = document.getElementById("loginErr");
-  const btn = document.getElementById("loginBtn");
-  errEl.textContent = "";
-  if (!u || !p) { errEl.textContent = "请输入账号和密码"; return; }
-  btn.disabled = true; btn.textContent = "登录中...";
-  try {
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: u, password: p })
-    });
-    const data = await res.json();
-    if (res.ok && data.token) {
-      setToken(data.token);
-      showMain();
-    } else {
-      errEl.textContent = data.error || "登录失败";
-    }
-  } catch (e) {
-    errEl.textContent = "网络错误：" + e.message;
-  } finally {
-    btn.disabled = false; btn.textContent = "登录";
-  }
-}
-
-// ===== 退出登录 =====
-function doLogout() {
-  clearToken();
-  showLogin();
-  document.getElementById("username").value = "";
-  document.getElementById("password").value = "";
-  document.getElementById("patInput").value = "";
-  const result = document.getElementById("result");
-  result.className = "result";
-  result.textContent = "";
-}
-
 // ===== 更新 GitHub PAT =====
 async function updatePat() {
   const input = document.getElementById("patInput");
   const btn = document.getElementById("updateBtn");
-  const result = document.getElementById("result");
   const newPat = input.value.trim();
+  const result = document.getElementById("result");
   result.className = "result";
   result.textContent = "";
   if (!newPat) {
     showResult("error", "请输入新的 GitHub 令牌");
     return;
   }
-  if (!getToken()) { clearToken(); showLogin(); return; }
 
   btn.disabled = true;
   btn.textContent = "提交中...";
   try {
     const res = await fetch("/api/update-key", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + getToken()  // 只传临时 token，不传 API 密钥
-      },
-      body: JSON.stringify({ apiKey: newPat })  // 字段名 apiKey，与后端一致
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: newPat })
     });
     const data = await res.json();
-    if (res.status === 401) {
-      clearToken();
-      showResult("error", "登录已失效，请重新登录");
-      setTimeout(showLogin, 1500);
-    } else if (res.ok) {
+    if (res.ok) {
       if (data.persisted) {
         showResult("success", data.message || "令牌更新成功，已持久化到环境变量");
       } else {
         showResult("warn", data.message || "令牌已在内存中生效，但未持久化");
       }
-      input.value = "";  // 提交后清空输入框
-      loadCurrentToken();  // 刷新当前令牌显示
+      input.value = "";
+      loadCurrentToken();
     } else {
       showResult("error", data.error || "更新失败");
     }
@@ -517,23 +291,7 @@ async function updatePat() {
   }
 }
 
-// ===== 登录页密码框：小眼睛切换 =====
-function toggleLoginPwd() {
-  const input = document.getElementById("password");
-  const eyeOpen = document.getElementById("eyeOpen");
-  const eyeClose = document.getElementById("eyeClose");
-  if (input.type === "password") {
-    input.type = "text";
-    eyeOpen.style.display = "none";
-    eyeClose.style.display = "";
-  } else {
-    input.type = "password";
-    eyeOpen.style.display = "";
-    eyeClose.style.display = "none";
-  }
-}
-
-// ===== 主页面令牌框：显示/隐藏 =====
+// ===== 令牌框：显示/隐藏切换 =====
 function toggleVisibility() {
   const input = document.getElementById("patInput");
   const btn = document.getElementById("toggleBtn");
@@ -545,32 +303,6 @@ function toggleVisibility() {
     btn.textContent = "显示";
   }
 }
-
-// ===== 登录页底部：Worker 连接状态检测 =====
-async function checkWorkerHealth() {
-  // 显示当前配置的 Worker 地址
-  const urlEl = document.getElementById("workerUrlDisplay");
-  const statusEl = document.getElementById("workerStatus");
-  if (!urlEl || !statusEl) return;  // 主页面不显示
-  urlEl.textContent = location.origin + "（与网页同源）";
-  statusEl.textContent = "检测中...";
-  statusEl.className = "status-wait";
-  try {
-    const res = await fetch("/health", { method: "GET" });
-    if (res.ok) {
-      statusEl.textContent = "✅ 已连接";
-      statusEl.className = "status-ok";
-    } else {
-      statusEl.textContent = "❌ Worker 返回 HTTP " + res.status;
-      statusEl.className = "status-bad";
-    }
-  } catch (e) {
-    // 常见原因：Worker 未部署 / CORS 被拦 / 域名写错
-    statusEl.textContent = "❌ 无法连接（" + e.name + "：" + shorten(e.message) + "）";
-    statusEl.className = "status-bad";
-  }
-}
-function shorten(s) { return s.length > 40 ? s.slice(0, 40) + "..." : (s || "未知错误"); }
 
 // ===== 显示结果提示 =====
 function showResult(type, text) {
