@@ -40,7 +40,7 @@ export default {
 
     // CORS 预检请求
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders(env) });
+      return new Response(null, { status: 204, headers: corsHeaders(env, request) });
     }
 
     // 路由
@@ -56,10 +56,10 @@ export default {
 
     // 健康检查
     if (url.pathname === "/" || url.pathname === "/health") {
-      return json({ ok: true }, 200, env);
+      return json({ ok: true }, 200, env, request);
     }
 
-    return json({ error: "Not Found" }, 404, env);
+    return json({ error: "Not Found" }, 404, env, request);
   }
 };
 
@@ -73,24 +73,24 @@ async function handleLogin(request, env) {
   try {
     body = await request.json();
   } catch {
-    return json({ error: "请求体格式错误，应为 JSON" }, 400, env);
+    return json({ error: "请求体格式错误，应为 JSON" }, 400, env, request);
   }
 
   const { username, password } = body || {};
   if (!username || !password) {
-    return json({ error: "账号和密码不能为空" }, 400, env);
+    return json({ error: "账号和密码不能为空" }, 400, env, request);
   }
 
   // 校验账号密码（环境变量，不硬编码）
   if (username !== env.USER_NAME || password !== env.USER_PASS) {
-    return json({ error: "账号或密码错误" }, 401, env);
+    return json({ error: "账号或密码错误" }, 401, env, request);
   }
 
   // 生成临时 token 并写入内存表
   const token = generateToken();
   tokenStore.set(token, Date.now() + TOKEN_TTL);
 
-  return json({ token }, 200, env);
+  return json({ token }, 200, env, request);
 }
 
 // ============================================================
@@ -104,7 +104,7 @@ async function handleUpdateKey(request, env) {
   const auth = request.headers.get("Authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (!token || !isTokenValid(token)) {
-    return json({ error: "token 失效，请重新登录" }, 401, env);
+    return json({ error: "token 失效，请重新登录" }, 401, env, request);
   }
 
   // 2. 解析新 PAT
@@ -112,15 +112,15 @@ async function handleUpdateKey(request, env) {
   try {
     body = await request.json();
   } catch {
-    return json({ error: "请求体格式错误，应为 JSON" }, 400, env);
+    return json({ error: "请求体格式错误，应为 JSON" }, 400, env, request);
   }
   const { apiKey } = body || {};
   if (!apiKey || typeof apiKey !== "string") {
-    return json({ error: "新令牌不能为空" }, 400, env);
+    return json({ error: "新令牌不能为空" }, 400, env, request);
   }
   const trimmed = apiKey.trim();
   if (!trimmed) {
-    return json({ error: "新令牌不能为空" }, 400, env);
+    return json({ error: "新令牌不能为空" }, 400, env, request);
   }
 
   // 3. 立即写入内存缓存，使新 PAT 对当前实例立即生效
@@ -135,7 +135,7 @@ async function handleUpdateKey(request, env) {
       ok: true,
       persisted: false,
       message: "令牌已更新（仅当前实例生效，Worker 重启后失效）。如需持久化，请配置 CF_API_TOKEN、CF_ACCOUNT_ID、CF_WORKER_NAME。"
-    }, 200, env);
+    }, 200, env, request);
   }
 
   try {
@@ -145,20 +145,20 @@ async function handleUpdateKey(request, env) {
         ok: true,
         persisted: true,
         message: "令牌已更新并持久化到 Worker 环境变量 GITHUB_TOKEN，重启后仍有效。"
-      }, 200, env);
+      }, 200, env, request);
     } else {
       return json({
         ok: false,
         persisted: false,
         message: "令牌已在内存中生效，但写入环境变量失败，请检查 CF_API_TOKEN 权限及 CF_ACCOUNT_ID/CF_WORKER_NAME。"
-      }, 200, env);
+      }, 200, env, request);
     }
   } catch (e) {
     return json({
       ok: false,
       persisted: false,
       message: "令牌已在内存中生效，但调用 Cloudflare API 出错：" + e.message
-    }, 200, env);
+    }, 200, env, request);
   }
 }
 
@@ -171,18 +171,18 @@ async function handleGetToken(request, env) {
   const auth = request.headers.get("Authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (!token || !isTokenValid(token)) {
-    return json({ error: "token 失效，请重新登录" }, 401, env);
+    return json({ error: "token 失效，请重新登录" }, 401, env, request);
   }
 
   const pat = tokenOverride || env.GITHUB_TOKEN;
   if (!pat) {
-    return json({ hasToken: false, preview: "" }, 200, env);
+    return json({ hasToken: false, preview: "" }, 200, env, request);
   }
   // 脱敏：只返回前4位 + **** + 后4位
   const preview = pat.length > 12
     ? pat.slice(0, 4) + "****" + pat.slice(-4)
     : "****";
-  return json({ hasToken: true, preview }, 200, env);
+  return json({ hasToken: true, preview }, 200, env, request);
 }
 
 // ============================================================
@@ -268,23 +268,30 @@ function generateToken() {
   return hex + "_" + Date.now().toString(36);
 }
 
-function corsHeaders(env) {
-  const origin = env.FRONT_ORIGIN || DEFAULT_ORIGIN;
+// CORS：反射请求的 Origin 头（单用户自用场景最省心，不用改环境变量）
+// 如果 FRONT_ORIGIN 有配置则优先用它，否则反射 Origin
+function corsHeaders(env, request) {
+  let origin = env.FRONT_ORIGIN || "";
+  if (!origin && request) {
+    origin = request.headers.get("Origin") || "*";
+  }
+  if (!origin) origin = "*";
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Credentials": "true",
     "Access-Control-Max-Age": "86400",
     "Vary": "Origin"
   };
 }
 
-function json(obj, status, env) {
+function json(obj, status, env, request) {
   return new Response(JSON.stringify(obj), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
-      ...corsHeaders(env)
+      ...corsHeaders(env, request)
     }
   });
 }

@@ -56,6 +56,41 @@
     transition: border-color .15s;
   }
   .login-wrap input:focus { border-color: #4e9acd; }
+
+  /* 密码框 + 小眼睛容器（相对定位） */
+  .pwd-wrap {
+    position: relative;
+  }
+  .pwd-wrap input {
+    padding-right: 40px;  /* 给眼睛按钮留位置 */
+  }
+  .eye-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 30px;
+    height: 30px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+  }
+  .eye-btn:hover { background: #30363d; }
+  .eye-btn svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: #8b949e;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .eye-btn:hover svg { stroke: #4e9acd; }
+
   .login-wrap button {
     width: 100%;
     height: 40px;
@@ -76,6 +111,20 @@
     margin-top: 10px;
     min-height: 18px;
   }
+
+  /* 登录页底部：接口地址 + 连接状态 */
+  .login-footer {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed #30363d;
+    font-size: 12px;
+    color: #8b949e;
+    line-height: 1.8;
+    word-break: break-all;
+  }
+  .login-footer .status-ok { color: #3fb950; }
+  .login-footer .status-bad { color: #f97583; }
+  .login-footer .status-wait { color: #8b949e; }
 
   /* ===== 主页面 ===== */
   .main-wrap {
@@ -254,9 +303,30 @@
   <label for="username">账号</label>
   <input id="username" type="text" autocomplete="username" placeholder="请输入账号">
   <label for="password">密码</label>
-  <input id="password" type="password" autocomplete="current-password" placeholder="请输入密码">
+  <div class="pwd-wrap">
+    <input id="password" type="password" autocomplete="current-password" placeholder="请输入密码">
+    <!-- 小眼睛按钮（默认显示眼睛，点击切换到斜线眼睛） -->
+    <button type="button" class="eye-btn" onclick="toggleLoginPwd()" id="loginEye" title="显示/隐藏密码">
+      <!-- 睁眼：默认显示 -->
+      <svg id="eyeOpen" viewBox="0 0 24 24">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+      <!-- 闭眼（带斜线）：默认隐藏 -->
+      <svg id="eyeClose" viewBox="0 0 24 24" style="display:none">
+        <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a19.77 19.77 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a19.6 19.6 0 0 1-3.17 4.19M1 1l22 22"/>
+        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
+      </svg>
+    </button>
+  </div>
   <button id="loginBtn" onclick="doLogin()">登录</button>
   <div class="err-msg" id="loginErr"></div>
+
+  <!-- 底部：接口地址 + 连接状态（方便排错 Failed to fetch） -->
+  <div class="login-footer">
+    <div>接口：<span id="workerUrlDisplay">-</span></div>
+    <div>连接：<span id="workerStatus" class="status-wait">检测中...</span></div>
+  </div>
 </div>
 
 <!-- ===== 主页面（登录后显示） ===== -->
@@ -305,8 +375,8 @@ function getToken() { return localStorage.getItem("github_pat_token") || ""; }
 function setToken(t) { localStorage.setItem("github_pat_token", t); }
 function clearToken() { localStorage.removeItem("github_pat_token"); }
 
-// 启动时检查登录状态
-if (getToken()) { showMain(); } else { showLogin(); }
+// 启动时检查登录状态 + 检测 Worker 连接
+if (getToken()) { showMain(); } else { showLogin(); checkWorkerHealth(); }
 
 function showLogin() {
   document.getElementById("loginPage").style.display = "";
@@ -447,7 +517,23 @@ async function updatePat() {
   }
 }
 
-// ===== 显示/隐藏令牌 =====
+// ===== 登录页密码框：小眼睛切换 =====
+function toggleLoginPwd() {
+  const input = document.getElementById("password");
+  const eyeOpen = document.getElementById("eyeOpen");
+  const eyeClose = document.getElementById("eyeClose");
+  if (input.type === "password") {
+    input.type = "text";
+    eyeOpen.style.display = "none";
+    eyeClose.style.display = "";
+  } else {
+    input.type = "password";
+    eyeOpen.style.display = "";
+    eyeClose.style.display = "none";
+  }
+}
+
+// ===== 主页面令牌框：显示/隐藏 =====
 function toggleVisibility() {
   const input = document.getElementById("patInput");
   const btn = document.getElementById("toggleBtn");
@@ -459,6 +545,32 @@ function toggleVisibility() {
     btn.textContent = "显示";
   }
 }
+
+// ===== 登录页底部：Worker 连接状态检测 =====
+async function checkWorkerHealth() {
+  // 显示当前配置的 Worker 地址
+  const urlEl = document.getElementById("workerUrlDisplay");
+  const statusEl = document.getElementById("workerStatus");
+  if (!urlEl || !statusEl) return;  // 主页面不显示
+  urlEl.textContent = WORKER_URL;
+  statusEl.textContent = "检测中...";
+  statusEl.className = "status-wait";
+  try {
+    const res = await fetch(`${WORKER_URL}/health`, { method: "GET" });
+    if (res.ok) {
+      statusEl.textContent = "✅ 已连接";
+      statusEl.className = "status-ok";
+    } else {
+      statusEl.textContent = "❌ Worker 返回 HTTP " + res.status;
+      statusEl.className = "status-bad";
+    }
+  } catch (e) {
+    // 常见原因：Worker 未部署 / CORS 被拦 / 域名写错
+    statusEl.textContent = "❌ 无法连接（" + e.name + "：" + shorten(e.message) + "）";
+    statusEl.className = "status-bad";
+  }
+}
+function shorten(s) { return s.length > 40 ? s.slice(0, 40) + "..." : (s || "未知错误"); }
 
 // ===== 显示结果提示 =====
 function showResult(type, text) {
