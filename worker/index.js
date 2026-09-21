@@ -14,6 +14,10 @@
  *    TRAE_BASE_URL  Trae 接口基础地址（含版本路径，如 https://api.trae.com.cn/v1）
  *    FRONT_ORIGIN   允许的前端域名（如 https://1rc2.github.io）
  *    MODEL_NAME     调用的模型名（可选，默认 default）
+ *  —— 以下 3 个用于「密钥更新」功能（通过 Cloudflare API 修改 TRAE_API_KEY 环境变量）：
+ *    CF_API_TOKEN   Cloudflare API Token，需具备 Workers Scripts: Edit 权限
+ *    CF_ACCOUNT_ID  Cloudflare 账户 ID（Dashboard 右侧栏可见）
+ *    CF_WORKER_NAME 当前 Worker 的脚本名称（如 trae-proxy）
  * ============================================================
  */
 
@@ -30,6 +34,13 @@ const DEFAULT_ORIGIN = "https://1rc2.github.io";
 // 默认系统提示词，可被环境变量 SYSTEM_PROMPT 覆盖
 const DEFAULT_SYSTEM_PROMPT = "你是一个有帮助的 AI 助手。";
 
+// ===== 内存中的 API 密钥覆盖缓存 =====
+// 当用户通过前端「密钥更新」提交新密钥时：
+//   1) 先写入此处，使 /api/ai 立即使用新密钥（无需等待 Worker 重启）
+//   2) 再通过 Cloudflare API 把新密钥写入环境变量，实现持久化
+// 若 Cloudflare API 调用失败，此处仍会生效（仅在当前实例生命周期内）。
+let apiKeyOverride = null; // string | null
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -45,6 +56,9 @@ export default {
     }
     if (url.pathname === "/api/ai" && request.method === "POST") {
       return handleAI(request, env);
+    }
+    if (url.pathname === "/api/update-key" && request.method === "POST") {
+      return handleUpdateKey(request, env);
     }
 
     // 健康检查（可选，方便排查 Worker 是否在线）
@@ -112,8 +126,9 @@ async function handleAI(request, env) {
     return json({ error: "prompt 不能为空" }, 400, env);
   }
 
-  // 3. 读取环境变量中的密钥与地址（不写死、不返回前端）
-  const apiKey = env.TRAE_API_KEY;
+  // 3. 读取密钥与地址（不写死、不返回前端）
+  //    优先使用内存中的覆盖值（用户刚提交的新密钥），兜底用环境变量
+  const apiKey = apiKeyOverride || env.TRAE_API_KEY;
   const baseUrl = (env.TRAE_BASE_URL || "").replace(/\/+$/, "");
   if (!apiKey || !baseUrl) {
     return json({ error: "服务端未配置 Trae 密钥或接口地址" }, 500, env);
@@ -155,6 +170,146 @@ async function handleAI(request, env) {
   } catch (e) {
     return json({ error: "调用 Trae 接口失败：" + e.message }, 502, env);
   }
+}
+
+// ============================================================
+//  密钥更新接口：POST /api/update-key
+//  入参 Header：Authorization: Bearer <token>
+//  入参 Body：  { apiKey: "新的 Trae API 密钥" }
+//  返回：{ ok: true, persisted: true/false, message }
+//  说明：
+//    - 先写入内存缓存，使新密钥立即生效
+//    - 若配置了 CF_API_TOKEN/CF_ACCOUNT_ID/CF_WORKER_NAME，则通过 Cloudflare API
+//      把新密钥写入环境变量 TRAE_API_KEY（持久化，Worker 重启后仍有效）
+//    - 若未配置上述 3 个变量，则只更新内存（返回 persisted:false，重启失效）
+// ============================================================
+async function handleUpdateKey(request, env) {
+  // 1. 校验 token
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (!token || !isTokenValid(token)) {
+    return json({ error: "token 失效，请重新登录" }, 401, env);
+  }
+
+  // 2. 解析新密钥
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "请求体格式错误，应为 JSON" }, 400, env);
+  }
+  const { apiKey } = body || {};
+  if (!apiKey || typeof apiKey !== "string") {
+    return json({ error: "新密钥不能为空" }, 400, env);
+  }
+  const trimmed = apiKey.trim();
+  if (!trimmed) {
+    return json({ error: "新密钥不能为空" }, 400, env);
+  }
+
+  // 3. 立即写入内存缓存，使新密钥对当前实例立即生效
+  apiKeyOverride = trimmed;
+
+  // 4. 尝试通过 Cloudflare API 持久化到环境变量
+  const cfToken = env.CF_API_TOKEN;
+  const cfAccountId = env.CF_ACCOUNT_ID;
+  const cfWorkerName = env.CF_WORKER_NAME;
+  if (!cfToken || !cfAccountId || !cfWorkerName) {
+    // 未配置 Cloudflare API 凭证：只更新内存，不持久化
+    return json({
+      ok: true,
+      persisted: false,
+      message: "密钥已更新（仅当前实例生效，Worker 重启后失效）。如需持久化，请在环境变量中配置 CF_API_TOKEN、CF_ACCOUNT_ID、CF_WORKER_NAME。"
+    }, 200, env);
+  }
+
+  try {
+    const persisted = await updateEnvVarViaCfApi(cfToken, cfAccountId, cfWorkerName, trimmed);
+    if (persisted) {
+      return json({
+        ok: true,
+        persisted: true,
+        message: "密钥已更新并持久化到 Worker 环境变量，重启后仍有效。"
+      }, 200, env);
+    } else {
+      return json({
+        ok: false,
+        persisted: false,
+        message: "密钥已在内存中生效，但写入环境变量失败，请检查 CF_API_TOKEN 权限及 CF_ACCOUNT_ID/CF_WORKER_NAME 是否正确。"
+      }, 200, env);
+    }
+  } catch (e) {
+    return json({
+      ok: false,
+      persisted: false,
+      message: "密钥已在内存中生效，但调用 Cloudflare API 出错：" + e.message
+    }, 200, env);
+  }
+}
+
+// ============================================================
+//  通过 Cloudflare API 更新 Worker 环境变量 TRAE_API_KEY
+//  步骤：
+//    1) GET 当前所有变量
+//    2) 找到 TRAE_API_KEY 条目，替换其值为 newKey（保留其余变量不变）
+//    3) PUT 回完整变量列表（Cloudflare 的 PUT 是全量替换，不能只放一个）
+//  返回：true 成功，false 失败
+// ============================================================
+async function updateEnvVarViaCfApi(cfToken, accountId, workerName, newKey) {
+  const apiBase = "https://api.cloudflare.com/client/v4";
+  const varsUrl = `${apiBase}/accounts/${accountId}/workers/scripts/${workerName}/variables`;
+
+  const headers = {
+    "Authorization": `Bearer ${cfToken}`,
+    "Content-Type": "application/json"
+  };
+
+  // 1) 获取当前变量列表
+  const getRes = await fetch(varsUrl, { method: "GET", headers });
+  if (!getRes.ok) {
+    console.error("CF API GET variables failed:", getRes.status);
+    return false;
+  }
+  const getJson = await getRes.json();
+  if (!getJson.success) {
+    console.error("CF API GET variables errors:", JSON.stringify(getJson.errors));
+    return false;
+  }
+  // vars 结构：[{name, value, type, ...}]
+  const vars = Array.isArray(getJson.result) ? getJson.result : [];
+
+  // 2) 替换 TRAE_API_KEY 的值，其余保持不变
+  let found = false;
+  const updatedVars = vars.map(v => {
+    if (v.name === "TRAE_API_KEY") {
+      found = true;
+      // type 保持原类型（通常是 secret_text），只改 value
+      return { name: v.name, value: newKey, type: v.type || "secret_text" };
+    }
+    // 保留原有字段，但只回传 name/value/type（CF API 要求）
+    return { name: v.name, value: v.value, type: v.type };
+  });
+  // 若变量列表里原本没有 TRAE_API_KEY，则追加
+  if (!found) {
+    updatedVars.push({ name: "TRAE_API_KEY", value: newKey, type: "secret_text" });
+  }
+
+  // 3) PUT 回完整变量列表
+  const putRes = await fetch(varsUrl, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({ vars: updatedVars })
+  });
+  if (!putRes.ok) {
+    console.error("CF API PUT variables failed:", putRes.status);
+    return false;
+  }
+  const putJson = await putRes.json();
+  if (!putJson.success) {
+    console.error("CF API PUT variables errors:", JSON.stringify(putJson.errors));
+    return false;
+  }
+  return true;
 }
 
 // ============================================================

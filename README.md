@@ -64,6 +64,11 @@ sjkglxt/
 | `USER_PASS` | 登录密码（自定义强密码） | **Encrypt** |
 | `TRAE_API_KEY` | Trae 平台的 API 密钥 | **Encrypt** |
 | `TRAE_BASE_URL` | Trae 接口基础地址（如 `https://api.trae.com.cn/v1`） | 否 |
+| `CF_API_TOKEN` | （密钥更新功能用）Cloudflare API Token，需具备 Workers Scripts: Edit 权限 | **Encrypt** |
+| `CF_ACCOUNT_ID` | （密钥更新功能用）Cloudflare 账户 ID（Dashboard 右侧栏可见） | 否 |
+| `CF_WORKER_NAME` | （密钥更新功能用）当前 Worker 脚本名（如 `trae-proxy`） | 否 |
+
+> 前 4 个是必配；后 3 个是「密钥更新」功能专用，不配也能登录对话，但无法通过页面把新密钥持久化到环境变量。
 
 3. 全部添加后点 **Save and Deploy** 保存。
 
@@ -110,6 +115,13 @@ const WORKER_URL = "https://trae-proxy.<你的子域>.workers.dev";
 - 在输入框填写 prompt → 点发送
 - Worker 校验 token，从环境变量读取 `TRAE_API_KEY`，转发到 `TRAE_BASE_URL`
 - AI 返回结果由 Worker 透传到前端展示
+
+### 密钥更新（Tab：密钥管理）
+- 登录后切换到「密钥管理」Tab
+- 输入新的 Trae API 密钥 → 点「提交更新」
+- 新密钥会**立即生效**（写入 Worker 内存缓存）
+- 若已配置 `CF_API_TOKEN` / `CF_ACCOUNT_ID` / `CF_WORKER_NAME`，新密钥会通过 Cloudflare API 持久化写入环境变量 `TRAE_API_KEY`（Worker 重启后仍有效）
+- 页面会显示绿色（成功持久化）/ 黄色（仅内存生效）/ 红色（失败）提示
 
 ### 跨域
 Worker 默认允许 `https://1rc2.github.io` 域名跨域访问，无需额外配置。若改用其他域名，需修改 `worker/index.js` 中的 `Access-Control-Allow-Origin`。
