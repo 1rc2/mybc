@@ -1,195 +1,124 @@
-# 网页版 Trae 密钥管理 & AI 代理系统
+# GitHub 令牌管理（Cloudflare Worker 同源自托管）
 
-单人自用的轻量级 AI 代理网关：**静态前端 + Cloudflare Workers 后端**。Trae API 密钥仅保存在 Workers 环境变量中，前端浏览器永远拿不到原始密钥（方案 A 安全架构）。
+单人自用的网页版 GitHub 个人访问令牌（PAT）管理器。
 
----
-
-## 一、整体架构
-
-```
-浏览器（index.html，部署在 1rc2.github.io/sjkglxt/）
-   │  ① 登录请求：账号 + 密码
-   │  ② AI 请求：临时 token + prompt
-   ▼
-Cloudflare Workers（Serverless，无服务器）
-   │  校验账号密码 / token，从环境变量读取 TRAE_API_KEY
-   ▼
-Trae API（第三方 AI 接口）
-   │  返回 AI 回答
-   ▼
-Workers 透传回答 → 浏览器
-```
-
-- **前端**：静态 HTML，部署到 GitHub Pages（`https://1rc2.github.io/sjkglxt/`）
-- **后端**：Cloudflare Workers（免费额度足够单人自用）
-- **密钥安全**：前端 JS 不写任何 API 密钥，只传 prompt 和登录凭证
+- **架构（方案 A，同源自托管）**：前端页面和所有接口都由同一个 Cloudflare Worker 提供，前后端同一域名，**没有跨域、没有预检、没有 GitHub Pages 部署/404 问题**。
+- **密钥安全**：GitHub PAT 只存在 Worker 环境变量 `GITHUB_TOKEN`，前端通过页面登录后，用临时 token 提交新 PAT；原始 PAT 全程不经过前端浏览器明文返回。
+- 仓库的 GitHub Token（`ghp_...`）仅用于本仓库代码推送，**与本系统管理的"GitHub PAT"是两回事**，请区分清楚。
 
 ---
 
-## 二、仓库目录结构
+## 一、架构
+
+```
+浏览器  ──►  https://traemy.fuyi.workers.dev/        （Worker 返回前端页面）
+              │  POST /api/login       账号 + 密码 → token
+              │  GET  /api/get-token   token → 脱敏预览（ghp_****abcd）
+              │  POST /api/update-key  token + 新 PAT → 更新环境变量
+              ▼
+          Cloudflare Workers（traemy）
+              │  通过 Cloudflare API 写回自身环境变量 GITHUB_TOKEN
+```
+
+---
+
+## 二、仓库结构
 
 ```
 sjkglxt/
-├── index.html      # 前端页面（登录页 + AI 对话页）
+├── index.html        # 前端页面（源码，登录页 + 令牌管理）
 ├── worker/
-│   └── index.js    # Cloudflare Workers 后端代码
-├── AGENTS.md        # AI 开发助手说明
-└── README.md       # 本文档
+│   └── index.js      # 后端代码（内嵌了 index.html，部署用这一个文件即可）
+├── README.md
+└── AGENTS.md
 ```
+
+**注意**：`worker/index.js` 是**构建产物**，它把 `index.html` 通过 `JSON.stringify` 安全内嵌成一个 `FRONTEND_HTML` 常量。改前端后需重新生成一次（见第五节）。
 
 ---
 
 ## 三、Cloudflare Workers 部署教程
 
-### 1. 注册 / 登录 Cloudflare
-访问 https://dash.cloudflare.com/ 注册账号并登录。
+### 1. 创建 Worker
+1. 进入 https://dash.cloudflare.com/ → **Workers & Pages** → **Create application** → **Create Worker**
+2. 名称填 `traemy`（或任意名）→ **Deploy**
+3. 部署后得到域名，如 `https://traemy.fuyi.workers.dev`
 
-### 2. 创建 Worker
-1. 左侧菜单选 **Workers & Pages** → **Create application** → **Create Worker**
-2. 填写名称（如 `trae-proxy`）→ **Deploy**
-3. 部署后得到访问域名，形如 `https://trae-proxy.<你的子域>.workers.dev`
+### 2. 粘贴代码
+1. 进入该 Worker → **Edit code**
+2. 把本仓库 `worker/index.js` **全部内容**覆盖粘贴进编辑器
+3. 右上角 **Save and deploy**
 
-### 3. 编辑 Worker 代码
-1. 进入刚创建的 Worker → **Edit code**（编辑代码）
-2. 将本仓库 `worker/index.js` 全部内容粘贴到在线编辑器（覆盖默认代码）
-3. 右上角 **Save and deploy** 保存部署
+### 3. 配置环境变量（关键）
+Worker 详情页 → **Settings** → **Variables and Secrets**，添加：
 
-### 4. 配置环境变量（关键）
-1. Worker 详情页 → **Settings** → **Variables**（变量）
-2. 依次添加以下环境变量（Type 选 **Text**，敏感的选 **Encrypt**）：
+| 变量名 | 说明 | Type |
+|--------|------|------|
+| `USER_NAME` | 登录账号（如 `admin`） | Text |
+| `USER_PASS` | 登录密码（自定义强密码） | **Secret** |
+| `CF_ACCOUNT_ID` | Cloudflare 账户 ID（Dashboard 首页右侧栏可见） | **Secret** |
+| `CF_WORKER_NAME` | Worker 脚本名（如 `traemy`） | Text |
+| `CF_API_TOKEN` | Cloudflare API Token，权限需含 **Workers Scripts: Edit** | **Secret** |
+| `GITHUB_TOKEN` | 初始 GitHub PAT（可留空，之后通过网页更新） | **Secret** |
 
-| 变量名 | 说明 | 是否加密 |
-|--------|------|---------|
-| `USER_NAME` | 登录账号（如 `admin`） | 否 |
-| `USER_PASS` | 登录密码（自定义强密码） | **Encrypt** |
-| `TRAE_API_KEY` | Trae 平台的 API 密钥 | **Encrypt** |
-| `TRAE_BASE_URL` | Trae 接口基础地址（如 `https://api.trae.com.cn/v1`） | 否 |
-| `CF_API_TOKEN` | （密钥更新功能用）Cloudflare API Token，需具备 Workers Scripts: Edit 权限 | **Encrypt** |
-| `CF_ACCOUNT_ID` | （密钥更新功能用）Cloudflare 账户 ID（Dashboard 右侧栏可见） | 否 |
-| `CF_WORKER_NAME` | （密钥更新功能用）当前 Worker 脚本名（如 `trae-proxy`） | 否 |
+> `GITHUB_TOKEN` 初始可以为空，登录网页后用它自己更新也行。
+> 前 5 项缺一，则网页更新只写进 Worker 内存（重启丢失，返回黄色提示），无法持久化。
 
-> 前 4 个是必配；后 3 个是「密钥更新」功能专用，不配也能登录对话，但无法通过页面把新密钥持久化到环境变量。
-
-3. 全部添加后点 **Save and Deploy** 保存。
-
-### 5. 验证后端
-浏览器访问 `https://trae-proxy.<子域>.workers.dev/`，应返回 `{"ok":true}`。
+### 4. 验证
+浏览器访问 `https://traemy.fuyi.workers.dev/health` → 返回 `{"ok":true}`；
+访问 `https://traemy.fuyi.workers.dev/` → 显示登录页。
 
 ---
 
-## 四、前端部署到 .io 站点步骤
+## 四、使用说明
 
-### 1. 上传 index.html 到 sjkglxt 仓库根目录
-确认 `index.html` 已在仓库根目录（GitHub 网页直接 Upload file，或 git push）。
+1. 打开 `https://traemy.fuyi.workers.dev/`（网页由 Worker 自己托管，无需 GitHub Pages）
+2. 输入 `USER_NAME` / `USER_PASS` 登录
+3. 主页显示「当前令牌」的脱敏预览（前4位 + **** + 后4位）
+4. 输入新的 GitHub PAT → **提交更新**
+   - 🟢 绿色：已持久化到环境变量，重启仍有效
+   - 🟡 黄色：仅内存生效（CF_* 变量没配齐或 Token 权限不够），重启丢失
+   - 🔴 红色：更新失败
 
-### 2. 开启 GitHub Pages
-1. 仓库 **Settings** → **Pages**
-2. **Build and deployment**：
-   - Source 选 **Deploy from a branch**
-   - Branch 选 `main` / `(root)`
-3. 几秒后页面顶部出现访问地址：`https://1rc2.github.io/sjkglxt/`
+---
 
-### 3. 修改前端的 Worker 地址
-打开 `index.html`，找到下面这行：
+## 五、修改前端后如何重新生成 worker/index.js
 
-```html
-const WORKER_URL = "https://trae-proxy.<你的子域>.workers.dev";
+改完 `index.html` 后，需把它重新内嵌进 `worker/index.js`（`index.html` 中不要出现反引号 `` ` `` 或 `${`）。
+
+在仓库根目录运行：
+
+```bash
+node -e '
+  const fs = require("fs");
+  const html = fs.readFileSync("index.html", "utf8");
+  const logic = fs.readFileSync("worker/_logic.js", "utf8")
+    .replace('const FRONTEND_HTML = "__FRONTEND_HTML__";', "");
+  fs.writeFileSync("worker/index.js",
+    "const FRONTEND_HTML = " + JSON.stringify(html) + ";\n" + logic);
+'
 ```
 
-改成你在第三步创建的 Worker 域名，保存后推送。
-
-### 4. 验证前端
-访问 `https://1rc2.github.io/sjkglxt/`：
-- 输入 `USER_NAME` / `USER_PASS` 对应的账号密码 → 进入对话页
-- 输入 prompt → 返回 AI 回答即成功
-
----
-
-## 五、使用说明
-
-### 登录
-- 输入 Cloudflare Workers 环境变量中配置的 `USER_NAME` 与 `USER_PASS`
-- 登录成功后获得临时 token，保存在浏览器内存中（关闭页面即失效）
-
-### 对话
-- 在输入框填写 prompt → 点发送
-- Worker 校验 token，从环境变量读取 `TRAE_API_KEY`，转发到 `TRAE_BASE_URL`
-- AI 返回结果由 Worker 透传到前端展示
-
-### 密钥更新（Tab：密钥管理）
-- 登录后切换到「密钥管理」Tab
-- 输入新的 Trae API 密钥 → 点「提交更新」
-- 新密钥会**立即生效**（写入 Worker 内存缓存）
-- 若已配置 `CF_API_TOKEN` / `CF_ACCOUNT_ID` / `CF_WORKER_NAME`，新密钥会通过 Cloudflare API 持久化写入环境变量 `TRAE_API_KEY`（Worker 重启后仍有效）
-- 页面会显示绿色（成功持久化）/ 黄色（仅内存生效）/ 红色（失败）提示
-
-### 跨域
-Worker 默认允许 `https://1rc2.github.io` 域名跨域访问，无需额外配置。若改用其他域名，需修改 `worker/index.js` 中的 `Access-Control-Allow-Origin`。
+> 说明：`worker/_logic.js` 是不含前端页面的后端逻辑源文件，作为"生成模板"保留在仓库里；`worker/index.js` 是部署用的成品。若仓库中没有 `_logic.js`，直接用 `node --check` 校验 `index.js` 语法后照常部署即可。
 
 ---
 
 ## 六、安全提醒
 
-⚠️ **本项目为单人自用，不要公开访问。**
+⚠️ **本项目单人自用，不要把 Worker 域名公开。**
 
-1. **Trae API 密钥全程不出 Workers**
-   - 前端 JS 永远拿不到原始密钥
-   - Worker 转发请求时由后台注入 `Authorization` 头
-   - 浏览器开发者工具看到的只有 Worker 自己的接口地址
-
-2. **账号密码不要硬编码**
-   - 必须通过 Cloudflare Workers 环境变量配置
-   - 密码用 **Encrypt** 选项加密保存
-   - 不要把密码写到 `worker/index.js` 代码里
-
-3. **Worker URL 不要公开分享**
-   - 虽然有 token 校验，但暴露 URL 会增加被刷接口的风险
-   - 建议把 sjkglxt 仓库设为 **Private**（GitHub Pages 私有仓库需 Pro 才能开启）
-   - 或者在 Worker 中校验 `Origin` 头，只允许指定域名访问
-
-4. **token 失效处理**
-   - Worker 重启 / 重新部署后 token 失效，需重新登录
-   - 浏览器关闭 / 刷新页面后需重新登录
-
-5. **Trae API 用量监控**
-   - Cloudflare Workers 免费额度：10 万次请求/天，足够单人自用
-   - Trae API 自身额度见 Trae 平台后台
+1. **GitHub PAT 不出 Worker**：前端只拿到临时登录 token；`GET /api/get-token` 只返回脱敏预览，绝不返回完整 PAT。
+2. **账号密码、CF Token、PAT 都用 Secret（Encrypt）** 类型，不要用 Text 明文。
+3. **`USER_PASS`、`CF_API_TOKEN`、`GITHUB_TOKEN` 不要在聊天/代码/git 记录里明文出现**。
+4. **临时 token 存在 Worker 内存**，重启会失效，需重新登录（单人自用足够）。
 
 ---
 
 ## 七、常见问题
 
-### Q1：登录提示"密码错误"
-- 检查 Workers 环境变量 `USER_NAME` / `USER_PASS` 是否与输入一致
-- 密码区分大小写，检查是否含空格
-
-### Q2：发送对话提示"token 失效"
-- 关闭页面 / 重启 Worker 后 token 会失效，重新登录即可
-- 检查 Worker 是否重新部署过
-
-### Q3：AI 调用失败提示"上游错误"
-- 检查 `TRAE_API_KEY` 是否正确、是否过期
-- 检查 `TRAE_BASE_URL` 是否正确（含 `/v1` 等路径）
-- 在 Cloudflare Workers 日志查看详细错误
-
-### Q4：跨域报错
-- 确认前端域名与 Worker 的 `Access-Control-Allow-Origin` 一致
-- 默认允许 `https://1rc2.github.io`，改用其他域名需同步修改
-
-### Q5：GitHub Pages 部署后访问 404
-- 确认 `index.html` 在 `main` 分支根目录
-- Pages 设置中 Branch 选 `main` / `(root)`，等待 1-2 分钟生效
-
----
-
-## 八、更新本仓库
-
-修改代码后推送：
-
-```bash
-git add .
-git commit -m "更新说明"
-git push origin main
-```
-
-GitHub Pages 会在 1-2 分钟内自动同步。
+| 现象 | 可能原因 / 处理 |
+|------|----------------|
+| `Failed to fetch` | 历史原因（跨域）。现方案已同源，若仍出现，确认保存并重新部署了最新 `worker/index.js` |
+| 更新返回黄色"仅内存生效" | `CF_ACCOUNT_ID` / `CF_WORKER_NAME` / `CF_API_TOKEN` 未配齐，或 CF Token 没有 Workers Scripts: Edit 权限 |
+| 登录 401 | `USER_NAME` / `USER_PASS` 拼写或大小写不一致 |
+| 部署后首页还是旧的 | 浏览器缓存：强刷（Ctrl+Shift+R）或确认 Worker 已重新部署 |

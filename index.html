@@ -364,8 +364,9 @@
  * 3) Worker 在后台用 CF_API_TOKEN 调用 Cloudflare API 更新环境变量
  * ============================================================ */
 
-// ===== 配置：Cloudflare Worker 部署地址 =====
-const WORKER_URL = "https://traemy.fuyi.workers.dev";
+// ===== 部署说明 =====
+// 前端与后端现在同一域名部署在 Cloudflare Worker 上（方案 A，同源），
+// 因此统一使用相对路径请求，无需硬编码域名，天然规避 CORS 与预检问题。
 
 // token 管理（localStorage 只存登录凭证，不存密钥）
 function getToken() { return localStorage.getItem("github_pat_token") || ""; }
@@ -395,7 +396,7 @@ async function loadCurrentToken() {
   el.textContent = "加载中...";
   btn.disabled = true;
   try {
-    const res = await fetch(`${WORKER_URL}/api/get-token`, {
+    const res = await fetch("/api/get-token", {
       method: "GET",
       headers: { "Authorization": "Bearer " + getToken() }
     });
@@ -434,7 +435,7 @@ async function doLogin() {
   if (!u || !p) { errEl.textContent = "请输入账号和密码"; return; }
   btn.disabled = true; btn.textContent = "登录中...";
   try {
-    const res = await fetch(`${WORKER_URL}/api/login`, {
+    const res = await fetch("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: u, password: p })
@@ -482,7 +483,7 @@ async function updatePat() {
   btn.disabled = true;
   btn.textContent = "提交中...";
   try {
-    const res = await fetch(`${WORKER_URL}/api/update-key`, {
+    const res = await fetch("/api/update-key", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -549,11 +550,11 @@ async function checkWorkerHealth() {
   const urlEl = document.getElementById("workerUrlDisplay");
   const statusEl = document.getElementById("workerStatus");
   if (!urlEl || !statusEl) return;  // 主页面不显示
-  urlEl.textContent = WORKER_URL;
+  urlEl.textContent = location.origin + "（与网页同源）";
   statusEl.textContent = "检测中...";
   statusEl.className = "status-wait";
   try {
-    const res = await fetch(`${WORKER_URL}/health`, { method: "GET" });
+    const res = await fetch("/health", { method: "GET" });
     if (res.ok) {
       statusEl.textContent = "✅ 已连接";
       statusEl.className = "status-ok";
