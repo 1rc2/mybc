@@ -302,10 +302,10 @@
 <!-- ===== 登录页 ===== -->
 <div class="login-wrap" id="loginPage">
   <h1>GitHub 令牌管理</h1>
-  <div id="modeLabel" style="font-size:12px;color:#4e9acd;margin:-4px 0 8px;"></div>
-  <p class="sub">登录后管理你的 GitHub 个人访问令牌</p>
-  <label for="username">账号</label>
-  <input id="username" type="text" autocomplete="username" placeholder="请输入账号">
+  <div id="modeLabel" style="font-size:12px;color:#4e9acd;margin:-4px 0 4px;"></div>
+  <p class="sub" id="loginSub">登录后管理你的 GitHub 个人访问令牌</p>
+  <label for="username">用户名</label>
+  <input id="username" type="text" autocomplete="username" placeholder="请输入用户名">
   <label for="password">密码</label>
   <div class="pwd-row">
     <input id="password" type="password" autocomplete="current-password" placeholder="请输入密码">
@@ -323,7 +323,18 @@
   <button id="loginBtn" onclick="doLogin()">登录</button>
   <div class="err-msg" id="loginErr"></div>
 
-  <!-- 底部：接口地址 + 连接状态（方便排错 Failed to fetch） -->
+  <!-- 齿轮：GitHub Mode 下用于配置存储 PAT（首次使用/重置时展开） -->
+  <div id="patGearWrap" style="display:none;margin-top:8px;text-align:right;">
+    <a href="javascript:void(0)" onclick="togglePatPanel()" style="color:#4e9acd;font-size:12px;text-decoration:none;">⚙️ 存储配置</a>
+    <div id="patPanel" style="display:none;margin-top:8px;padding:10px;background:#21262d;border-radius:6px;border:1px solid #30363d;text-align:left;">
+      <div style="font-size:12px;color:#8b949e;margin-bottom:6px;">GitHub 读写凭证（需 repo scope，localStorage 记住，失效时在此重新填写）</div>
+      <input id="ghPat" type="password" style="width:100%;padding:6px 8px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#e6edf3;font-family:monospace;font-size:12px;" placeholder="ghp_...">
+      <button onclick="saveGhPat()" style="margin-top:6px;padding:4px 10px;background:#238636;border:none;border-radius:4px;color:#fff;cursor:pointer;font-size:12px;">保存</button>
+      <span id="patSaveMsg" style="margin-left:6px;font-size:11px;"></span>
+      <button onclick="clearGhPat()" style="margin-top:6px;margin-left:6px;padding:4px 10px;background:#30363d;border:none;border-radius:4px;color:#e6edf3;cursor:pointer;font-size:12px;">清除</button>
+    </div>
+  </div>
+
   <div class="login-footer">
     <div>接口：<span id="workerUrlDisplay">-</span></div>
     <div>连接：<span id="workerStatus" class="status-wait">检测中...</span></div>
@@ -459,21 +470,21 @@ function maskPat(pat) {
 
 // ===== 启动：根据 MODE 显示对应登录 =====
 window.addEventListener("DOMContentLoaded", () => {
+  const gearWrap = document.getElementById("patGearWrap");
+  const sub = document.getElementById("loginSub");
   if (MODE === "worker") {
-    // Worker Mode：原 admin/admin 登录
     document.getElementById("modeLabel").textContent = "🔵 Worker 模式（密钥存 Cloudflare）";
+    gearWrap.style.display = "none";
   } else {
-    // GitHub Mode：主密码 + 存储 PAT
-    document.getElementById("modeLabel").textContent = "🟢 GitHub 模式（AES 加密多设备同步）";
-    // 把"账号"改成"存储 PAT"，"密码"改成"主密码"
-    const u = document.getElementById("username");
-    const p = document.getElementById("password");
-    document.querySelector('label[for="username"]').textContent = "存储 PAT（写仓库权限）";
-    document.querySelector('label[for="password"]').textContent = "主密码（每次输入，不保存）";
-    u.placeholder = "ghp_... 只有 repo scope 即可";
-    p.placeholder = "加密用主密码（请牢记）";
+    document.getElementById("modeLabel").textContent = "🟢 GitHub 模式（AES-256-GCM 加密多设备同步）";
+    gearWrap.style.display = "";   // GitHub Mode 显示齿轮
+    // 存储 PAT 已配置则不提示，未配置则显示提示
+    if (localStorage.getItem("gh_sync_pat")) {
+      sub.textContent = "用户名+密码登录（存储凭证已缓存，可点齿轮查看/更新）";
+    } else {
+      sub.innerHTML = "用户名+密码登录 <span style='color:#f85149;'>⚠️ 首次使用请点右下角⚙️配置存储凭证</span>";
+    }
   }
-  // 健康检查 + 登录状态检测
   if (MODE === "worker" && localStorage.getItem("github_pat_token")) {
     showMain();
   } else {
@@ -521,16 +532,25 @@ async function doLogin() {
       errEl.textContent = data.error || "登录失败";
     }
   } else {
-    // GitHub Mode：验证 PAT，主密码仅存内存（localStorage 不存）
-    const res = await ghApi("GET", "/user", u);
-    if (!res.ok) {
-      errEl.textContent = "PAT 无效或权限不足（GitHub API " + res.status + "）";
-    } else {
-      _sessionPwd = p;                          // 主密码仅存内存
-      localStorage.setItem("gh_sync_pat", u);   // 只存"用于读写仓库"的 PAT
-      pEl.value = "";                           // 清空密码输入框
-      showMain();
+    // GitHub Mode：用户名+密码登录（密码即主密码，用于 AES 密钥派生）
+    // 存储 PAT 从 localStorage 读取（首次使用需在齿轮面板配置）
+    const syncPat = localStorage.getItem("gh_sync_pat");
+    if (!syncPat) {
+      errEl.textContent = "⚠️ 请先点⚙️配置存储凭证";
+      btn.disabled = false; btn.textContent = "登录";
+      return;
     }
+    // 校验存储 PAT 是否仍然有效（静默）
+    const test = await ghApi("GET", "/user", syncPat);
+    if (!test.ok) {
+      errEl.textContent = "⚠️ 存储凭证已失效（GitHub API " + test.status + "），请点⚙️更新";
+      btn.disabled = false; btn.textContent = "登录";
+      return;
+    }
+    // 登录成功：主密码仅存内存
+    _sessionPwd = p;
+    pEl.value = "";
+    showMain();
   }
   btn.disabled = false; btn.textContent = "登录";
 }
@@ -654,6 +674,45 @@ async function updatePat() {
     }
   }
   btn.disabled = false; btn.textContent = "提交更新";
+}
+
+// ===== 齿轮面板：存储凭证配置 =====
+function togglePatPanel() {
+  const panel = document.getElementById("patPanel");
+  panel.style.display = panel.style.display === "none" ? "" : "none";
+  // 展开时把已存 PAT 填入（type=password 遮罩）
+  if (panel.style.display !== "none") {
+    const pat = localStorage.getItem("gh_sync_pat");
+    if (pat) document.getElementById("ghPat").value = pat;
+  }
+}
+async function saveGhPat() {
+  const input = document.getElementById("ghPat");
+  const msg = document.getElementById("patSaveMsg");
+  const pat = input.value.trim();
+  if (!pat) { msg.textContent = "请输入 PAT"; msg.style.color = "#f85149"; return; }
+  msg.textContent = "验证中..."; msg.style.color = "#8b949e";
+  const res = await ghApi("GET", "/user", pat);
+  if (res.ok) {
+    localStorage.setItem("gh_sync_pat", pat);
+    msg.textContent = "✅ 已保存（localStorage）";
+    msg.style.color = "#3fb950";
+    input.value = "";
+    // 更新登录页提示
+    document.getElementById("loginSub").textContent = "用户名+密码登录（存储凭证已缓存）";
+    // 2 秒后收起面板
+    setTimeout(() => { document.getElementById("patPanel").style.display = "none"; }, 1500);
+  } else {
+    msg.textContent = "❌ PAT 无效（HTTP " + res.status + "）";
+    msg.style.color = "#f85149";
+  }
+}
+function clearGhPat() {
+  localStorage.removeItem("gh_sync_pat");
+  document.getElementById("ghPat").value = "";
+  document.getElementById("patSaveMsg").textContent = "✅ 已清除";
+  document.getElementById("patSaveMsg").style.color = "#3fb950";
+  document.getElementById("loginSub").innerHTML = "用户名+密码登录 <span style='color:#f85149;'>⚠️ 请先点⚙️配置存储凭证</span>";
 }
 
 // ===== 退出登录：清除所有本地状态 =====
