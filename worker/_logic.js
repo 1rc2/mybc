@@ -159,20 +159,18 @@ async function handleUpdateKey(request, env) {
         message: "令牌已更新并持久化到 Worker 环境变量 GITHUB_TOKEN，重启后仍有效。"
       }, 200, request);
     } else {
-      // 持久化失败：返回 5xx，前端 updatePat() 会正确进入错误分支（res.ok===false）
       return json({
         ok: false,
         persisted: false,
-        error: "令牌已在内存中生效，但写入环境变量失败，请检查 CF_API_TOKEN 权限及 CF_ACCOUNT_ID/CF_WORKER_NAME。"
-      }, 500, request);
+        message: "令牌已在内存中生效，但写入环境变量失败，请检查 CF_API_TOKEN 权限及 CF_ACCOUNT_ID/CF_WORKER_NAME。"
+      }, 200, request);
     }
   } catch (e) {
-    // 持久化失败：返回 5xx，前端 updatePat() 会正确进入错误分支（res.ok===false）
     return json({
       ok: false,
       persisted: false,
-      error: "令牌已在内存中生效，但调用 Cloudflare API 出错：" + e.message
-    }, 500, request);
+      message: "令牌已在内存中生效，但调用 Cloudflare API 出错：" + e.message
+    }, 200, request);
   }
 }
 
@@ -200,33 +198,60 @@ async function handleGetToken(request, env) {
 }
 
 // ============================================================
-//  通过 Cloudflare API 写入/更新 Worker 的 secret 环境变量
-//  GITHUB_TOKEN 是 secret_text 类型，必须走 secret 专属端点：
-//    PUT /accounts/{account_id}/workers/scripts/{script_name}/secrets/{secret_name}
-//  实测对 secret 用 /variables PUT（或 POST /secrets 无 force）都会返回 10405
+//  通过 Cloudflare API 更新 Worker 环境变量
+//  步骤：
+//    1) GET 当前所有变量
+//    2) 找到指定变量名，替换其值（保留其余变量不变）
+//    3) PUT 回完整变量列表
 // ============================================================
 async function updateEnvVarViaCfApi(cfToken, accountId, workerName, varName, newValue) {
   const apiBase = "https://api.cloudflare.com/client/v4";
-  const secretUrl = `${apiBase}/accounts/${accountId}/workers/scripts/${workerName}/secrets/${varName}`;
+  const varsUrl = `${apiBase}/accounts/${accountId}/workers/scripts/${workerName}/variables`;
 
   const headers = {
     "Authorization": `Bearer ${cfToken}`,
     "Content-Type": "application/json"
   };
 
-  // secret 专用端点：同名 PUT 即为更新；?force=true 允许覆盖已存在值
-  const putRes = await fetch(`${secretUrl}?force=true`, {
+  // 1) 获取当前变量列表
+  const getRes = await fetch(varsUrl, { method: "GET", headers });
+  if (!getRes.ok) {
+    console.error("CF API GET variables failed:", getRes.status);
+    return false;
+  }
+  const getJson = await getRes.json();
+  if (!getJson.success) {
+    console.error("CF API GET variables errors:", JSON.stringify(getJson.errors));
+    return false;
+  }
+  const vars = Array.isArray(getJson.result) ? getJson.result : [];
+
+  // 2) 替换指定变量的值
+  let found = false;
+  const updatedVars = vars.map(v => {
+    if (v.name === varName) {
+      found = true;
+      return { name: v.name, value: newValue, type: v.type || "secret_text" };
+    }
+    return { name: v.name, value: v.value, type: v.type };
+  });
+  if (!found) {
+    updatedVars.push({ name: varName, value: newValue, type: "secret_text" });
+  }
+
+  // 3) PUT 回完整变量列表
+  const putRes = await fetch(varsUrl, {
     method: "PUT",
     headers,
-    body: JSON.stringify({ name: varName, text: newValue, type: "secret_text" })
+    body: JSON.stringify({ vars: updatedVars })
   });
   if (!putRes.ok) {
-    console.error("CF API PUT secret failed:", putRes.status);
+    console.error("CF API PUT variables failed:", putRes.status);
     return false;
   }
   const putJson = await putRes.json();
   if (!putJson.success) {
-    console.error("CF API PUT secret errors:", JSON.stringify(putJson.errors));
+    console.error("CF API PUT variables errors:", JSON.stringify(putJson.errors));
     return false;
   }
   return true;
