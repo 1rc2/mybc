@@ -1,0 +1,14 @@
+name = "traemy"
+main = "worker/index.js"
+compatibility_date = "2024-01-01"
+
+# 路由：Worker 绑定到 *.workers.dev 子域名（自动）
+# 如需自定义域名，在 Cloudflare Dashboard 配置
+
+# 环境变量在 Cloudflare Dashboard 或用 wrangler secret put 配置：
+# USER_NAME       登录账号
+# USER_PASS       登录密码
+# CF_ACCOUNT_ID   Cloudflare 账户 ID
+# CF_WORKER_NAME  "traemy"
+# CF_API_TOKEN    Workers Scripts:Edit 权限
+# GITHUB_TOKEN    GitHub PAT（初始可留空）
