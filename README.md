@@ -1,209 +1,183 @@
-# 大学生竞赛成果管理系统 —— 手机 APP 版
+# 网页版 Trae 密钥管理 & AI 代理系统
 
-原项目为 PyQt5 桌面程序，现改写为**手机 APP**：`Python Flask 后端 API + 移动端网页界面`，界面风格、业务逻辑、数据库功能与原桌面版完全一致，并可一键打包为安卓 APK。
+单人自用的轻量级 AI 代理网关：**静态前端 + Cloudflare Workers 后端**。Trae API 密钥仅保存在 Workers 环境变量中，前端浏览器永远拿不到原始密钥（方案 A 安全架构）。
 
 ---
 
-## 一、系统架构
+## 一、整体架构
 
 ```
-手机浏览器 / 安卓 APP (app/ 目录, 复刻 PyQt5 界面)
-        │  HTTP / JSON
-        ▼
-Python Flask 后端 (server.py, 端口 5000)
-        │  复用原数据库逻辑 (db.py)
-        ▼
-MySQL 数据库 (competition_db, 5 张表)
+浏览器（index.html，部署在 1rc2.github.io/sjkglxt/）
+   │  ① 登录请求：账号 + 密码
+   │  ② AI 请求：临时 token + prompt
+   ▼
+Cloudflare Workers（Serverless，无服务器）
+   │  校验账号密码 / token，从环境变量读取 TRAE_API_KEY
+   ▼
+Trae API（第三方 AI 接口）
+   │  返回 AI 回答
+   ▼
+Workers 透传回答 → 浏览器
 ```
 
-- 后端：`server.py`（登录 / 五表 CRUD / 联合查询 / 统计 / 报表导出）
-- 数据库：`db.py` + `database.sql`（原桌面版文件原样保留）
-- 界面：`app/` 目录，与桌面版配色、布局、文案一致
+- **前端**：静态 HTML，部署到 GitHub Pages（`https://1rc2.github.io/sjkglxt/`）
+- **后端**：Cloudflare Workers（免费额度足够单人自用）
+- **密钥安全**：前端 JS 不写任何 API 密钥，只传 prompt 和登录凭证
 
-## 二、目录结构
+---
+
+## 二、仓库目录结构
 
 ```
-├── server.py          # Flask 后端 API 服务（主入口，含 CORS）
-├── db.py              # 数据库封装（pymysql 单例，原版保留）
-├── database.sql       # 建库建表 + 测试数据（原版保留）
-├── requirements.txt   # 依赖：flask / pymysql
-├── start_server.bat   # 一键启动后端（Windows）
-├── sjkglxt.apk        # 已打包好的安卓安装包
-├── app/               # 移动端界面
-│   ├── index.html     # 页面结构（登录页 / 主界面 / 弹窗）
-│   ├── css/style.css  # 样式（复刻 PyQt5 配色）
-│   └── js/app.js      # 逻辑（登录/CRUD/查询/图表/导出/服务器配置）
-├── android/           # 安卓 APK 打包工程
-│   ├── AndroidManifest.xml
-│   ├── src/           # WebView 壳源码 (MainActivity.java)
-│   ├── build_apk.ps1  # 本机一键打包脚本
-│   └── icon_char.txt  # 应用图标文字
-└── README.md
+sjkglxt/
+├── index.html      # 前端页面（登录页 + AI 对话页）
+├── worker/
+│   └── index.js    # Cloudflare Workers 后端代码
+├── AGENTS.md        # AI 开发助手说明
+└── README.md       # 本文档
 ```
 
-## 三、环境要求
+---
 
-| 依赖 | 版本 | 说明 |
-|------|------|------|
-| Python | 3.8+ | 运行后端 |
-| MySQL | 8.0+ | CHECK 约束需 8.0.16+ |
-| flask | 2.0+ | Web 服务 |
-| pymysql | 1.0+ | MySQL 驱动 |
+## 三、Cloudflare Workers 部署教程
 
-## 四、部署步骤（在电脑上运行）
+### 1. 注册 / 登录 Cloudflare
+访问 https://dash.cloudflare.com/ 注册账号并登录。
 
-### 第 1 步：安装依赖
+### 2. 创建 Worker
+1. 左侧菜单选 **Workers & Pages** → **Create application** → **Create Worker**
+2. 填写名称（如 `trae-proxy`）→ **Deploy**
+3. 部署后得到访问域名，形如 `https://trae-proxy.<你的子域>.workers.dev`
+
+### 3. 编辑 Worker 代码
+1. 进入刚创建的 Worker → **Edit code**（编辑代码）
+2. 将本仓库 `worker/index.js` 全部内容粘贴到在线编辑器（覆盖默认代码）
+3. 右上角 **Save and deploy** 保存部署
+
+### 4. 配置环境变量（关键）
+1. Worker 详情页 → **Settings** → **Variables**（变量）
+2. 依次添加以下环境变量（Type 选 **Text**，敏感的选 **Encrypt**）：
+
+| 变量名 | 说明 | 是否加密 |
+|--------|------|---------|
+| `USER_NAME` | 登录账号（如 `admin`） | 否 |
+| `USER_PASS` | 登录密码（自定义强密码） | **Encrypt** |
+| `TRAE_API_KEY` | Trae 平台的 API 密钥 | **Encrypt** |
+| `TRAE_BASE_URL` | Trae 接口基础地址（如 `https://api.trae.com.cn/v1`） | 否 |
+
+3. 全部添加后点 **Save and Deploy** 保存。
+
+### 5. 验证后端
+浏览器访问 `https://trae-proxy.<子域>.workers.dev/`，应返回 `{"ok":true}`。
+
+---
+
+## 四、前端部署到 .io 站点步骤
+
+### 1. 上传 index.html 到 sjkglxt 仓库根目录
+确认 `index.html` 已在仓库根目录（GitHub 网页直接 Upload file，或 git push）。
+
+### 2. 开启 GitHub Pages
+1. 仓库 **Settings** → **Pages**
+2. **Build and deployment**：
+   - Source 选 **Deploy from a branch**
+   - Branch 选 `main` / `(root)`
+3. 几秒后页面顶部出现访问地址：`https://1rc2.github.io/sjkglxt/`
+
+### 3. 修改前端的 Worker 地址
+打开 `index.html`，找到下面这行：
+
+```html
+const WORKER_URL = "https://trae-proxy.<你的子域>.workers.dev";
+```
+
+改成你在第三步创建的 Worker 域名，保存后推送。
+
+### 4. 验证前端
+访问 `https://1rc2.github.io/sjkglxt/`：
+- 输入 `USER_NAME` / `USER_PASS` 对应的账号密码 → 进入对话页
+- 输入 prompt → 返回 AI 回答即成功
+
+---
+
+## 五、使用说明
+
+### 登录
+- 输入 Cloudflare Workers 环境变量中配置的 `USER_NAME` 与 `USER_PASS`
+- 登录成功后获得临时 token，保存在浏览器内存中（关闭页面即失效）
+
+### 对话
+- 在输入框填写 prompt → 点发送
+- Worker 校验 token，从环境变量读取 `TRAE_API_KEY`，转发到 `TRAE_BASE_URL`
+- AI 返回结果由 Worker 透传到前端展示
+
+### 跨域
+Worker 默认允许 `https://1rc2.github.io` 域名跨域访问，无需额外配置。若改用其他域名，需修改 `worker/index.js` 中的 `Access-Control-Allow-Origin`。
+
+---
+
+## 六、安全提醒
+
+⚠️ **本项目为单人自用，不要公开访问。**
+
+1. **Trae API 密钥全程不出 Workers**
+   - 前端 JS 永远拿不到原始密钥
+   - Worker 转发请求时由后台注入 `Authorization` 头
+   - 浏览器开发者工具看到的只有 Worker 自己的接口地址
+
+2. **账号密码不要硬编码**
+   - 必须通过 Cloudflare Workers 环境变量配置
+   - 密码用 **Encrypt** 选项加密保存
+   - 不要把密码写到 `worker/index.js` 代码里
+
+3. **Worker URL 不要公开分享**
+   - 虽然有 token 校验，但暴露 URL 会增加被刷接口的风险
+   - 建议把 sjkglxt 仓库设为 **Private**（GitHub Pages 私有仓库需 Pro 才能开启）
+   - 或者在 Worker 中校验 `Origin` 头，只允许指定域名访问
+
+4. **token 失效处理**
+   - Worker 重启 / 重新部署后 token 失效，需重新登录
+   - 浏览器关闭 / 刷新页面后需重新登录
+
+5. **Trae API 用量监控**
+   - Cloudflare Workers 免费额度：10 万次请求/天，足够单人自用
+   - Trae API 自身额度见 Trae 平台后台
+
+---
+
+## 七、常见问题
+
+### Q1：登录提示"密码错误"
+- 检查 Workers 环境变量 `USER_NAME` / `USER_PASS` 是否与输入一致
+- 密码区分大小写，检查是否含空格
+
+### Q2：发送对话提示"token 失效"
+- 关闭页面 / 重启 Worker 后 token 会失效，重新登录即可
+- 检查 Worker 是否重新部署过
+
+### Q3：AI 调用失败提示"上游错误"
+- 检查 `TRAE_API_KEY` 是否正确、是否过期
+- 检查 `TRAE_BASE_URL` 是否正确（含 `/v1` 等路径）
+- 在 Cloudflare Workers 日志查看详细错误
+
+### Q4：跨域报错
+- 确认前端域名与 Worker 的 `Access-Control-Allow-Origin` 一致
+- 默认允许 `https://1rc2.github.io`，改用其他域名需同步修改
+
+### Q5：GitHub Pages 部署后访问 404
+- 确认 `index.html` 在 `main` 分支根目录
+- Pages 设置中 Branch 选 `main` / `(root)`，等待 1-2 分钟生效
+
+---
+
+## 八、更新本仓库
+
+修改代码后推送：
 
 ```bash
-pip install flask pymysql -i https://pypi.tuna.tsinghua.edu.cn/simple
-```
-
-### 第 2 步：确认数据库
-
-- 打开 [db.py](db.py)，按本机 MySQL 修改 `DB_CONFIG`（默认 `root / 041632qwe`）。
-- 确保 MySQL 已启动。
-- 若数据库 `competition_db` 尚未初始化，执行一次：
-
-```bash
-python db.py
-```
-
-> 该命令会自动执行 `database.sql`：建库、建 5 张表、导入测试数据。
-
-### 第 3 步：启动后端
-
-双击 `start_server.bat`，或命令行执行：
-
-```bash
-python server.py
-```
-
-启动成功后会打印手机访问地址，例如：`http://192.168.1.100:5000`
-
-### 第 4 步：手机访问
-
-1. 手机和电脑连接**同一个 Wi-Fi**；
-2. 手机浏览器打开 `http://电脑IP:5000`（电脑 IP 见后端启动日志）；
-3. 登录：默认账号 `admin`，密码 `admin123`。
-
-> ⚠️ Windows 防火墙：首次启动时如弹出防火墙提示，请勾选"允许访问"，否则手机无法访问 5000 端口。
-> 也可以在"控制面板 → Windows Defender 防火墙 → 允许应用通过防火墙"中手动放行 Python。
-
-## 五、功能对照（与原桌面版一致）
-
-| 桌面版功能 | 手机 APP |
-|-----------|---------|
-| 登录窗口（admin/admin123，回车登录） | 登录页（Enter 键登录） |
-| 顶部欢迎栏 | 顶部蓝色栏显示当前用户 |
-| 数据管理 Tab：5 张表 CRUD | 底部"数据管理"页，表切换 + 刷新/新增/修改/删除 |
-| 多条件联合查询（3 行，= / 包含，AND） | 查询卡片，字段×运算符×值三行 |
-| 各院系获奖人数统计（柱状图） | Canvas 柱状图（同配色 #4e9acd） |
-| 历年参赛人数统计（折线图） | Canvas 折线图（同配色 #e67e22） |
-| 导出统计报表（txt） | 查看 / 一键复制 / 下载 txt |
-| 输入校验（学号 10 位、电话 11 位、年份 2000~2026 等） | 前后端双重校验 |
-| 外键约束删除保护提示 | 删除被引用记录时明确提示 |
-
-5 张表：院系表 depart、学生表 student、竞赛表 competition、奖项表 award、参赛记录表 record。
-
-## 六、打包成安卓 APK
-
-**方式一：本机一键打包（已测试通过，推荐）**
-
-本机已具备 Android SDK 时，直接在项目目录执行：
-
-```bash
-powershell -ExecutionPolicy Bypass -File android\build_apk.ps1
-```
-
-脚本自动完成：复制界面资源 → 生成图标 → 资源编译 → Java 编译 → 打包 → 签名，
-产物为项目根目录 `sjkglxt.apk`（约 25KB），可直接安装到安卓手机。
-
-APK 特点：
-- 界面资源内置在 APK（离线加载，秒开）；
-- 首次打开会弹出"服务器设置"，填写电脑端地址（如 `http://192.168.1.247:5000`），
-  数据即走该后端访问 MySQL（登录页左下角 ⚙ 服务器设置 可随时修改）；
-- 已加 CORS 支持，APK 内页面可跨源访问后端 API。
-
-**方式二：HBuilderX 云打包（免本机环境）**
-
-1. 下载安装 [HBuilderX](https://www.dcloud.io/hbuilderx.html)（免费）；
-2. 新建项目：`文件 → 新建 → 项目`，模板选 **5+ App（HTML5+）**，名称如 `sjkglxt`；
-3. 将本仓库 `app/` 下的 `index.html`、`css/`、`js/` 复制到项目根目录（覆盖原文件）；
-4. 打开 `manifest.json`：填写应用名称（如"竞赛成果管理系统"）、设置应用图标；
-5. 点击菜单 `发行 → 原生App-云打包`，选择 **Android**，证书选"使用公共测试证书"，点打包；
-6. 打包完成后下载 APK，安装到手机即可。
-
-> 说明：无论哪种方式，正式使用建议将后端部署到云服务器，并在 APP 的服务器设置中改为服务器域名。
-> 手机与电脑需同一局域网；Windows 防火墙需放行 5000 端口。
-
-## 七、数据恢复
-
-清空数据恢复初始测试状态：
-
-```bash
-python db.py   # 重新执行 database.sql（会重建全部表与测试数据）
-```
-
-## 八、上传到 GitHub（操作步骤）
-
-在项目目录（本仓库根目录）打开命令行：
-
-```bash
-# 1. 初始化仓库（若尚未初始化）
-git init
-
-# 2. 添加全部文件到暂存区
 git add .
-
-# 3. 提交（修改为自己的信息）
-git commit -m "大学生竞赛成果管理系统 - 手机APP版"
-
-# 4. 关联远程仓库（替换为你的仓库地址）
-git remote add origin https://github.com/你的用户名/sjkglxt.git
-
-# 5. 推送到 GitHub（首次推送加 -u）
-git push -u origin main
+git commit -m "更新说明"
+git push origin main
 ```
 
-若已配置过远程仓库，直接执行 `git add . && git commit -m "..." && git push` 即可。
-
-**私有仓库方式（推荐，密码不复用）**：
-GitHub → 你的仓库 → Settings → Developer settings → Personal access tokens → 生成 token（勾选 `repo` 权限），推送时用：
-
-```bash
-git push https://<你的用户名>:<token>@github.com/你的用户名/sjkglxt.git main
-```
-
-> ⚠️ token 等同密码，切勿提交到代码仓库或分享给他人。
-
-
----
-
-## 九、发布新版本（下载页自动更新）
-
-> 下载页 [https://1rc2.github.io/](https://1rc2.github.io/) 会自动读取本仓库的 **GitHub Releases**，
-> 不需要改网页代码，发布新版本只需按下面 3 步操作。
-
-### 发布新版本需要准备什么
-
-| 需要 | 说明 |
-|------|------|
-| 新版 APK 安装包 | 先按「六、打包成安卓 APK」打包好，文件名后缀必须是 `.apk` |
-| 版本号（Tag） | 如 `v1.1.0`，建议遵循 `v主版本.次版本.修订号` |
-| 更新说明 | 本次改了什么、修了什么，写进 Release 的说明框里 |
-
-### 发布 3 步操作
-
-1. 打开 GitHub 仓库的 **Releases** 页：`https://github.com/1rc2/sjkglxt/releases`
-2. 点击 **Draft a new release**（创建新发布）：
-   - Choose a tag：填新版本号（如 `v1.1.0`），点 **Create new tag**
-   - Release title：填版本名（如 `v1.1.0`）
-   - Describe this release：填写本次更新说明
-3. 拖入或上传 **新版 APK 文件**，确认后点 **Publish release**（发布）
-
-### 注意事项
-
-- ⚠️ 发布时**不要勾选** 「Set as a pre-release」；
-- ⚠️ APK 文件名后缀必须是 `.apk`，否则下载页识别不到；
-- 发布成功后，下载页约 **1~10 分钟内**自动显示新版本按钮，用户直接点即可下载；
-- 每次新版本都这样做，旧版本会保留在下载页「历史版本」里。
+GitHub Pages 会在 1-2 分钟内自动同步。
