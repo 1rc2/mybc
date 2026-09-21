@@ -1,1 +1,1 @@
-{"salt":"gIXQG4hhn3UzcngsW3hGiQ==","encrypted":"ovjGhhAxxEl5rMoa9H/CXjLDnizAd8KUdsftfW8BGnQ4WkpHZkeid3im/64E","iv":"KWSpfLZ/rhMJCqnG","version":2,"updated_at":"2026-09-21T11:56:32.212Z"}
+{"salt":"","encrypted":"","iv":"","tag":"","version":1,"updated_at":"","note":"AES-256-GCM encrypted storage, salt+iv+tag are base64"}
