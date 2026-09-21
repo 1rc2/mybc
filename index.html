@@ -358,89 +358,128 @@
   </div>
 </div>
 
-<script>
-/* ============================================================
- * 前端逻辑说明
- * ------------------------------------------------------------
- * 1) 前端只保存临时登录 token（localStorage），不保存任何 API 密钥
- * 2) 提交新 PAT 时，附带 Authorization: Bearer <token>
- * 3) Worker 在后台用 CF_API_TOKEN 调用 Cloudflare API 更新环境变量
+<script>/* ============================================================
+ * 前端核心 JS —— 双模式（Worker / GitHub）自动切换
+ * 安全设计：
+ *   1) 主密码只在内存短暂存在（每次输入，localStorage 不存）
+ *   2) 真实 PAT 用完立即覆盖 null（内存即清）
+ *   3) GitHub Mode 下 Gist/Contents 文件存 AES-256-GCM 密文 blob
+ *   4) PBKDF2-SHA256 派生密钥 100000 轮
  * ============================================================ */
 
-// ===== API 基地址自动判断 =====
-// 同一套前端部署在两处：
-//   1) Cloudflare Worker（traemy.fuyi.workers.dev）—— 前后端同源，用相对路径即可
-//   2) GitHub Pages（1rc2.github.io/mybc/）—— 只有静态前端，必须跨域调 Worker 后端
-// 根据当前 hostname 自动决定用哪种模式，Worker 端已配置 CORS 反射 Origin
-const API_BASE = location.hostname.endsWith(".workers.dev")
-  ? ""
-  : "https://traemy.fuyi.workers.dev";
+// ===== 模式自动判断 =====
+// *.workers.dev 域名 => Worker Mode（同源后端，密钥存 Cloudflare 环境变量）
+// 其他域名 => GitHub Mode（Repository Contents + AES 加密，多设备同步）
+const MODE = location.hostname.endsWith(".workers.dev") ? "worker" : "github";
+const API_BASE = MODE === "worker" ? "" : "https://api.github.com";
+const GITHUB_REPO = "1rc2/mybc";
+const GITHUB_FILE = ".sync-data/token_store.json";
+const PBKDF2_ITER = 100000;
 
-// ===== 通用带超时+重试的 fetch 包装 =====
-// Cloudflare Workers 在部分网络下偶发不稳定，加一层保护：
-//   - 单次请求超时 10 秒
-//   - 网络层失败时自动重试 2 次（总共 3 次尝试，间隔 1s/2s 指数退避）
-//   - 错误分类：timeout / network / http / cors，让 UI 能给出精准诊断
-async function apiFetch(path, options = {}) {
-  const MAX_ATTEMPTS = 3;
-  const TIMEOUT_MS = 10000;
+// ===== 跨页状态（都在内存，localStorage 只存"可选"辅助标记）=====
+let _sessionMasterKey = null;   // 主密钥派生结果（CryptoKey）
+let _sessionRealPat = null;    // 真实 GitHub PAT（用完即清）
+let _sessionLoginToken = null; // Worker Mode 用
 
-  let lastError = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-    try {
-      const res = await fetch(API_BASE + path, {
-        ...options,
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      // 有响应但 HTTP 错误
-      let data = null;
-      try { data = await res.json(); } catch { /* 非 JSON 忽略 */ }
-      return { ok: res.ok, status: res.status, data, error: null };
-    } catch (e) {
-      clearTimeout(timer);
-
-      // 错误分类
-      let category = "network";
-      let message = "";
-      if (e.name === "AbortError") {
-        category = "timeout";
-        message = `请求超时（${TIMEOUT_MS / 1000}秒），后端未响应`;
-      } else if (e.message && /Failed to fetch/i.test(e.message)) {
-        category = "cors_or_network";
-        message = "连接被阻断（可能是网络限制，workers.dev 在部分地区不稳定）";
-      } else if (e.message && /NetworkError|network/i.test(e.message)) {
-        category = "network";
-        message = "网络层错误（DNS 解析失败或连接被关闭）";
-      } else {
-        category = "unknown";
-        message = e.message || String(e);
-      }
-
-      lastError = { category, message };
-
-      // 最后一次尝试也失败 → 返回
-      if (attempt === MAX_ATTEMPTS) break;
-
-      // 等一下再重试（指数退避：1s, 2s）
-      const backoff = Math.pow(2, attempt - 1) * 1000;
-      await new Promise(r => setTimeout(r, backoff));
-    }
-  }
-  return { ok: false, status: 0, data: null, error: lastError };
+// ===== 加密工具（Web Crypto API，浏览器原生实现）=====
+async function pbkdf2DeriveKey(password, salt) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]
+  );
+  return await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITER, hash: "SHA-256" },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false, ["encrypt", "decrypt"]
+  );
 }
 
-// token 管理（localStorage 只存登录凭证，不存密钥）
-function getToken() { return localStorage.getItem("github_pat_token") || ""; }
-function setToken(t) { localStorage.setItem("github_pat_token", t); }
-function clearToken() { localStorage.removeItem("github_pat_token"); }
+async function aesGcmEncrypt(key, plaintext) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv }, key, enc.encode(plaintext)
+  );
+  return {
+    iv: btoa(String.fromCharCode(...iv)),
+    ciphertext: btoa(String.fromCharCode(...new Uint8Array(ciphertext)))
+  };
+}
 
-// 启动时检查登录状态 + 检测 Worker 连接
-if (getToken()) { showMain(); } else { showLogin(); checkWorkerHealth(); }
+async function aesGcmDecrypt(key, ivB64, ctB64) {
+  const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
+  const ct = Uint8Array.from(atob(ctB64), c => c.charCodeAt(0));
+  const dec = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
+  return new TextDecoder().decode(dec);
+}
+
+// ===== GitHub Contents API 封装 =====
+async function ghApi(method, path, token, body) {
+  const opts = {
+    method,
+    headers: {
+      "Authorization": "Bearer " + token,
+      "Accept": "application/vnd.github.v3+json",
+      "Content-Type": "application/json"
+    }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  return fetch(API_BASE + path, opts);
+}
+
+async function ghGetStore(token) {
+  const res = await ghApi("GET", `/repos/${GITHUB_REPO}/contents/${encodeURIComponent(GITHUB_FILE)}`, token);
+  if (res.status === 404) return { ok: true, exists: false };
+  if (!res.ok) return { ok: false, error: "GitHub API " + res.status };
+  const d = await res.json();
+  const content = JSON.parse(atob(d.content));
+  return { ok: true, exists: true, sha: d.sha, data: content };
+}
+
+async function ghPutStore(token, encrypted, sha) {
+  const content = btoa(JSON.stringify({
+    ...encrypted,
+    version: 2,
+    updated_at: new Date().toISOString()
+  }));
+  const body = { message: "sync: update encrypted token store", content };
+  if (sha) body.sha = sha;
+  const res = await ghApi("PUT", `/repos/${GITHUB_REPO}/contents/${encodeURIComponent(GITHUB_FILE)}`, token, body);
+  return { ok: res.ok, status: res.status };
+}
+
+// ===== 显示脱敏值 =====
+function maskPat(pat) {
+  if (!pat) return "（空）";
+  if (pat.length <= 8) return "****";
+  return pat.slice(0, 6) + "****" + pat.slice(-4);
+}
+
+// ===== 启动：根据 MODE 显示对应登录 =====
+window.addEventListener("DOMContentLoaded", () => {
+  if (MODE === "worker") {
+    // Worker Mode：原 admin/admin 登录
+    document.getElementById("modeLabel").textContent = "🔵 Worker 模式（密钥存 Cloudflare）";
+  } else {
+    // GitHub Mode：主密码 + 存储 PAT
+    document.getElementById("modeLabel").textContent = "🟢 GitHub 模式（AES 加密多设备同步）";
+    // 把"账号"改成"存储 PAT"，"密码"改成"主密码"
+    const u = document.getElementById("username");
+    const p = document.getElementById("password");
+    document.querySelector('label[for="username"]').textContent = "存储 PAT（写仓库权限）";
+    document.querySelector('label[for="password"]').textContent = "主密码（每次输入，不保存）";
+    u.placeholder = "ghp_... 只有 repo scope 即可";
+    p.placeholder = "加密用主密码（请牢记）";
+  }
+  // 健康检查 + 登录状态检测
+  if (MODE === "worker" && localStorage.getItem("github_pat_token")) {
+    showMain();
+  } else {
+    showLogin();
+    checkBackendHealth();
+  }
+});
 
 function showLogin() {
   document.getElementById("loginPage").style.display = "";
@@ -450,198 +489,244 @@ function showMain() {
   document.getElementById("loginPage").style.display = "none";
   document.getElementById("mainPage").style.display = "";
   document.getElementById("patInput").focus();
-  loadCurrentToken();  // 进入主页时加载当前令牌状态
-}
-
-// ===== 加载当前令牌（脱敏预览，调用后端 GET /api/get-token） =====
-async function loadCurrentToken() {
-  const el = document.getElementById("currentToken");
-  const btn = document.getElementById("refreshBtn");
-  if (!getToken()) { clearToken(); showLogin(); return; }
-  el.className = "value empty";
-  el.textContent = "加载中...";
-  btn.disabled = true;
-  const res = await apiFetch("/api/get-token", {
-    method: "GET",
-    headers: { "Authorization": "Bearer " + getToken() }
-  });
-  if (res.error) {
-    // 网络层失败（超时/DNS/workers.dev 被阻挡）
-    el.className = "value empty";
-    el.textContent = "⚠️ " + res.error.message;
-  } else if (res.status === 401) {
-    clearToken();
-    el.textContent = "登录已失效";
-    setTimeout(showLogin, 1500);
-  } else if (res.ok) {
-    if (res.data && res.data.hasToken && res.data.preview) {
-      el.className = "value";
-      el.textContent = res.data.preview;
-    } else {
-      el.className = "value empty";
-      el.textContent = "（未设置）";
-    }
-  } else {
-    el.className = "value empty";
-    el.textContent = res.data && res.data.error || ("加载失败（HTTP " + res.status + "）");
-  }
-  btn.disabled = false;
+  loadCurrentToken();
 }
 
 // ===== 登录 =====
 async function doLogin() {
-  const u = document.getElementById("username").value.trim();
-  const p = document.getElementById("password").value;
+  const uEl = document.getElementById("username");
+  const pEl = document.getElementById("password");
   const errEl = document.getElementById("loginErr");
   const btn = document.getElementById("loginBtn");
+  const u = uEl.value.trim();
+  const p = pEl.value;
   errEl.textContent = "";
-  if (!u || !p) { errEl.textContent = "请输入账号和密码"; return; }
+  if (!u || !p) { errEl.textContent = "请填写完整"; return; }
   btn.disabled = true; btn.textContent = "登录中...";
-  const res = await apiFetch("/api/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: u, password: p })
-  });
-  if (res.error) {
-    errEl.textContent = "⚠️ 无法连接后端（" + res.error.message + "）";
-  } else if (res.ok && res.data.token) {
-    setToken(res.data.token);
-    showMain();
+
+  if (MODE === "worker") {
+    // Worker Mode：POST /api/login
+    const res = await fetch(API_BASE + "/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    let data = {};
+    try { data = await res.json(); } catch {}
+    if (res.ok && data.token) {
+      localStorage.setItem("github_pat_token", data.token);
+      showMain();
+    } else {
+      errEl.textContent = data.error || "登录失败";
+    }
   } else {
-    errEl.textContent = res.data && res.data.error || "登录失败";
+    // GitHub Mode：验证 PAT + 派生主密钥
+    const res = await ghApi("GET", "/user", u);
+    if (!res.ok) {
+      errEl.textContent = "PAT 无效（GitHub API " + res.status + "）";
+    } else {
+      // 记住：主密码只用一次派生密钥，localStorage **不存**
+      _sessionMasterKey = await pbkdf2DeriveKey(p, new Uint8Array(16).fill(0));
+      localStorage.setItem("gh_sync_pat", u); // 存储 PAT 可存（最小权限）
+      // 用完立即清主密码
+      _masterPasswordClear = true;
+      showMain();
+    }
   }
   btn.disabled = false; btn.textContent = "登录";
 }
 
-// ===== 退出登录 =====
+// ===== 加载当前令牌 =====
+async function loadCurrentToken() {
+  const el = document.getElementById("currentToken");
+  const btn = document.getElementById("refreshBtn");
+  btn.disabled = true;
+  if (MODE === "worker") {
+    const t = localStorage.getItem("github_pat_token");
+    if (!t) { el.textContent = "（未登录）"; btn.disabled = false; return; }
+    const res = await fetch(API_BASE + "/api/get-token", {
+      headers: { "Authorization": "Bearer " + t }
+    });
+    let data = {}; try { data = await res.json(); } catch {}
+    if (res.status === 401) { localStorage.removeItem("github_pat_token"); showLogin(); return; }
+    if (data.hasToken && data.preview) { el.className = "value"; el.textContent = data.preview; }
+    else { el.className = "value empty"; el.textContent = "（未设置）"; }
+  } else {
+    // GitHub Mode：读加密存储并解密
+    const pat = localStorage.getItem("gh_sync_pat");
+    if (!pat) { el.textContent = "（未登录）"; btn.disabled = false; return; }
+    const g = await ghGetStore(pat);
+    if (!g.ok) { el.textContent = "⚠️ 读取失败：" + g.error; btn.disabled = false; return; }
+    if (!g.exists || !g.data.encrypted) { el.className = "value empty"; el.textContent = "（未设置，点击下方设置新令牌）"; btn.disabled = false; return; }
+    try {
+      const salt = Uint8Array.from(atob(g.data.salt), c => c.charCodeAt(0));
+      const key = await pbkdf2DeriveKey(_lastPwd || prompt("请输入主密码（解密用）："), salt);
+      const plain = await aesGcmDecrypt(key, g.data.iv, g.data.encrypted);
+      el.className = "value";
+      el.textContent = maskPat(plain);
+      _sessionRealPat = plain;  // 真实令牌短暂在内存
+      _clearRealPat = setTimeout(() => { _sessionRealPat = null; }, 30000); // 30秒后自动清
+    } catch (e) {
+      el.className = "value empty";
+      el.textContent = "⚠️ 主密码错误（无法解密）";
+    }
+  }
+  btn.disabled = false;
+}
+
+// ===== 更新令牌（核心功能）=====
+async function updatePat() {
+  const input = document.getElementById("patInput");
+  const btn = document.getElementById("updateBtn");
+  const newPat = input.value.trim();
+  if (!newPat) { showResult("error", "请输入新令牌"); return; }
+  btn.disabled = true; btn.textContent = "提交中...";
+
+  if (MODE === "worker") {
+    const t = localStorage.getItem("github_pat_token");
+    if (!t) { clearToken(); showLogin(); return; }
+    const res = await fetch(API_BASE + "/api/update-key", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + t
+      },
+      body: JSON.stringify({ apiKey: newPat })
+    });
+    let data = {}; try { data = await res.json(); } catch {}
+    if (res.status === 401) { localStorage.removeItem("github_pat_token"); showLogin(); return; }
+    if (data.persisted) showResult("success", data.message || "✅ 已持久化");
+    else showResult("warn", data.message || "已在内存生效");
+    input.value = ""; loadCurrentToken();
+  } else {
+    // GitHub Mode：加密写回仓库
+    const pat = localStorage.getItem("gh_sync_pat");
+    const g = await ghGetStore(pat);
+    let sha = null;
+    if (g.ok && g.exists) sha = g.sha;
+    let masterKey = _sessionMasterKey;
+    let saltArr = new Uint8Array(16);
+    if (!masterKey) {
+      // 首次设置或内存已清，重新输主密码
+      const p = prompt("请输入主密码（加密用）：");
+      if (!p) { btn.disabled = false; btn.textContent = "提交更新"; return; }
+      // 复用已有 salt（如有），否则生成新的
+      if (g.ok && g.exists && g.data.salt) {
+        saltArr = Uint8Array.from(atob(g.data.salt), c => c.charCodeAt(0));
+      } else {
+        saltArr = crypto.getRandomValues(new Uint8Array(16));
+      }
+      masterKey = await pbkdf2DeriveKey(p, saltArr);
+    } else {
+      // 用会话已派生的密钥；若 salt 已存在则用它重新派生（确保能解密旧密文）
+      if (g.ok && g.exists && g.data.salt) {
+        const saltStr = prompt("请输入主密码：");
+        if (!saltStr) { btn.disabled = false; btn.textContent = "提交更新"; return; }
+        saltArr = Uint8Array.from(atob(g.data.salt), c => c.charCodeAt(0));
+        masterKey = await pbkdf2DeriveKey(saltStr, saltArr);
+      }
+    }
+    const enc = await aesGcmEncrypt(masterKey, newPat);
+    const write = await ghPutStore(pat, {
+      salt: btoa(String.fromCharCode(...saltArr)),
+      encrypted: enc.ciphertext,
+      iv: enc.iv,
+    }, sha);
+    if (write.ok) {
+      showResult("success", "✅ 已加密保存到多设备同步仓库");
+      input.value = "";
+      // 用完即清：覆盖真实令牌
+      _sessionRealPat = null;
+      if (_clearRealPat) clearTimeout(_clearRealPat);
+      loadCurrentToken();
+    } else {
+      showResult("error", "写入失败（HTTP " + write.status + "）");
+    }
+  }
+  btn.disabled = false; btn.textContent = "提交更新";
+}
+
+// ===== 退出登录：清除所有本地状态 =====
 function doLogout() {
-  clearToken();
+  if (MODE === "worker") {
+    localStorage.removeItem("github_pat_token");
+  } else {
+    localStorage.removeItem("gh_sync_pat");
+    _sessionMasterKey = null;
+    _sessionRealPat = null;
+  }
   showLogin();
   document.getElementById("username").value = "";
   document.getElementById("password").value = "";
   document.getElementById("patInput").value = "";
-  const result = document.getElementById("result");
-  result.className = "result";
-  result.textContent = "";
+  document.getElementById("result").className = "result";
+  document.getElementById("result").textContent = "";
+  checkBackendHealth();
 }
 
-// ===== 更新 GitHub PAT =====
-async function updatePat() {
-  const input = document.getElementById("patInput");
-  const btn = document.getElementById("updateBtn");
-  const result = document.getElementById("result");
-  const newPat = input.value.trim();
-  result.className = "result";
-  result.textContent = "";
-  if (!newPat) {
-    showResult("error", "请输入新的 GitHub 令牌");
-    return;
-  }
-  if (!getToken()) { clearToken(); showLogin(); return; }
-
-  btn.disabled = true;
-  btn.textContent = "提交中...";
-  const res = await apiFetch("/api/update-key", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + getToken()
-    },
-    body: JSON.stringify({ apiKey: newPat })
-  });
-  if (res.error) {
-    showResult("error", "⚠️ 无法连接后端（" + res.error.message + "）");
-  } else if (res.status === 401) {
-    clearToken();
-    showResult("error", "登录已失效，请重新登录");
-    setTimeout(showLogin, 1500);
-  } else if (res.ok) {
-    if (res.data && res.data.persisted) {
-      showResult("success", res.data.message || "令牌更新成功，已持久化到环境变量");
-    } else {
-      showResult("warn", res.data.message || "令牌已在内存中生效，但未持久化");
-    }
-    input.value = "";
-    loadCurrentToken();
-  } else {
-    showResult("error", res.data && res.data.error || "更新失败");
-  }
-  btn.disabled = false;
-  btn.textContent = "提交更新";
-}
-
-// ===== 登录页密码框：小眼睛切换 =====
+// ===== 密码框小眼睛 =====
 function toggleLoginPwd() {
   const input = document.getElementById("password");
-  const eyeOpen = document.getElementById("eyeOpen");
-  const eyeClose = document.getElementById("eyeClose");
-  if (input.type === "password") {
-    input.type = "text";
-    eyeOpen.style.display = "none";
-    eyeClose.style.display = "";
-  } else {
-    input.type = "password";
-    eyeOpen.style.display = "";
-    eyeClose.style.display = "none";
-  }
+  input.type = input.type === "password" ? "text" : "password";
 }
 
-// ===== 主页面令牌框：显示/隐藏 =====
-function toggleVisibility() {
-  const input = document.getElementById("patInput");
-  const btn = document.getElementById("toggleBtn");
-  if (input.type === "password") {
-    input.type = "text";
-    btn.textContent = "隐藏";
-  } else {
-    input.type = "password";
-    btn.textContent = "显示";
-  }
-}
-
-// ===== 登录页底部：Worker 连接状态检测 =====
-async function checkWorkerHealth() {
-  // 根据 API_BASE 显示真实后端地址和连接模式
+// ===== 后端健康检查（模式适配）=====
+async function checkBackendHealth() {
   const urlEl = document.getElementById("workerUrlDisplay");
   const statusEl = document.getElementById("workerStatus");
-  if (!urlEl || !statusEl) return;  // 主页面不显示
-  if (API_BASE) {
-    // 跨域模式：前端（Pages/其他）→ Worker 后端
-    urlEl.textContent = API_BASE + "（跨域调用）";
+  if (!urlEl) return;
+  if (MODE === "worker") {
+    urlEl.textContent = API_BASE || location.origin + "（Worker 后端）";
+    statusEl.textContent = "检测中...";
+    statusEl.className = "status-wait";
+    try {
+      const res = await fetch(API_BASE + "/health");
+      if (res.ok) { statusEl.textContent = "✅ Worker 已连接"; statusEl.className = "status-ok"; }
+      else { statusEl.textContent = "❌ HTTP " + res.status; statusEl.className = "status-bad"; }
+    } catch (e) {
+      statusEl.textContent = "❌ 无法连接 Worker（workers.dev 可能不稳定）";
+      statusEl.className = "status-bad";
+    }
   } else {
-    // 同源模式：Worker 前端 → Worker 后端
-    urlEl.textContent = location.origin + "（同源）";
-  }
-  statusEl.textContent = "检测中...";
-  statusEl.className = "status-wait";
-  const res = await apiFetch("/health", { method: "GET" });
-  if (res.error) {
-    // 网络层失败：精准显示分类诊断 + 重试次数
-    const retries = 3;  // apiFetch 内部重试次数
-    const catLabel = {
-      "timeout": "请求超时",
-      "cors_or_network": "网络阻断",
-      "network": "网络错误",
-      "unknown": "未知错误"
-    }[res.error.category] || res.error.category;
-    statusEl.textContent = `❌ ${catLabel}（已重试${retries}次）：${res.error.message}`;
-    statusEl.className = "status-bad";
-  } else if (res.ok) {
-    statusEl.textContent = "✅ 已连接";
-    statusEl.className = "status-ok";
-  } else {
-    statusEl.textContent = "❌ Worker 返回 HTTP " + res.status;
-    statusEl.className = "status-bad";
+    // GitHub Mode：测 api.github.com + 多设备同步状态
+    urlEl.textContent = "GitHub API（" + GITHUB_REPO + "/" + GITHUB_FILE + "）";
+    statusEl.textContent = "检测中...";
+    statusEl.className = "status-wait";
+    try {
+      const res = await fetch(API_BASE + "/rate_limit");
+      if (res.ok) {
+        // 检查 .sync-data 文件是否存在
+        const pat = localStorage.getItem("gh_sync_pat");
+        if (pat) {
+          const g = await ghGetStore(pat);
+          if (g.ok && g.exists) {
+            statusEl.textContent = "✅ GitHub API + 多设备同步可用";
+          } else {
+            statusEl.textContent = "⚠️ 存储文件未初始化（首次使用会自动创建）";
+          }
+        } else {
+          statusEl.textContent = "✅ GitHub API 可达，请登录以启用多设备同步";
+        }
+        statusEl.className = "status-ok";
+      } else { statusEl.textContent = "❌ GitHub API HTTP " + res.status; statusEl.className = "status-bad"; }
+    } catch (e) {
+      statusEl.textContent = "❌ 无法连接 GitHub API"; statusEl.className = "status-bad";
+    }
   }
 }
-function shorten(s) { return s.length > 40 ? s.slice(0, 40) + "..." : (s || "未知错误"); }
 
-// ===== 显示结果提示 =====
+// ===== 结果提示 =====
 function showResult(type, text) {
   const el = document.getElementById("result");
   el.className = "result " + type;
   el.textContent = text;
 }
+
+// ===== 页面关闭/刷新时清内存 =====
+window.addEventListener("beforeunload", () => {
+  _sessionRealPat = null;
+  _sessionMasterKey = null;
+});
 </script>
 </body>
 </html>
